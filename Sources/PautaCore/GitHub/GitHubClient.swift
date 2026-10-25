@@ -30,6 +30,8 @@ struct PullDetails: Equatable {
 }
 
 /// Uma consulta GraphQL só, com o mesmo token do `gh`. Os contextos (até 50) contam quantos checks falharam.
+// shortcut: lê só os 100 primeiros pedidos de revisão (a REST pagina até 300); os além disso ficam sem checks. Paginar com
+// `after:` se a lista passar de 100.
 let pullDetailsQuery = """
 fragment checks on PullRequest { commits(last: 1) { nodes { commit { statusCheckRollup { state \
 contexts(first: 50) { nodes { ... on CheckRun { conclusion } ... on StatusContext { state } } } } } } } }

@@ -18,6 +18,7 @@ final class PautaEntry: NSObject, NeyPlugin {
 
     func start(host: NeyHost) {
         MainActor.assumeIsolated {
+            app.onOpenPermissions = { host.openPermissions() }
             // Opcional no contrato v1: NeyHub antigo sem showScreen só abre o link.
             if host.responds(to: #selector(NeyHost.showScreen(id:))) {
                 app.onShowScreen = { host.showScreen?(id: "local.pauta") }

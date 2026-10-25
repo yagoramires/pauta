@@ -303,3 +303,18 @@ struct LabeledField<Input: View>: View {
         }
     }
 }
+
+/// Hospedado sem permissão de notificações: o "Ligar" leva à tela de Permissões do NeyHub (o Pauta nunca pede ao sistema).
+struct PermissionNote: View {
+    var openPermissions: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "bell.slash").font(.system(size: 11))
+            Text("Notificações desligadas").font(.caption)
+            Text("·").font(.caption)
+            Button("Ligar", action: openPermissions).buttonStyle(.link).font(.caption).foregroundStyle(Grafite.accent)
+        }
+        .foregroundStyle(Grafite.muted)
+    }
+}

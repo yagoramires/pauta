@@ -445,6 +445,7 @@ struct ScreenView: View {
                 .accessibilityLabel("Atualizar")
             Button { showSettings = true } label: { Label("Configurações", systemImage: "gearshape") }.buttonStyle(.plain)
             Spacer(minLength: 0)
+            if shell.notificationsOff { PermissionNote(openPermissions: shell.openPermissions) }
         }
         .font(.system(size: 11)).foregroundStyle(Grafite.label)
     }

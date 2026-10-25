@@ -43,6 +43,7 @@ struct SettingsView: View {
                 ServiceTitle(.github)
                 Text("Usa o gh já logado no terminal (gh auth login).").font(.caption).foregroundStyle(Grafite.muted)
             }
+            if shell.notificationsOff { PermissionNote(openPermissions: shell.openPermissions) }
             display
             DisclosureGroup("Avançado (colar token manualmente)", isExpanded: $advanced) { manual.padding(.top, 8) }
                 .font(.callout)
@@ -51,6 +52,7 @@ struct SettingsView: View {
         }
         .padding(16)
         .task { if draft.jiraReady { await loadBoards() } }
+        .onAppear { shell.checkPermission() }
         // Conectar/Desconectar gravam com a tela aberta: base e rascunho passam a partir do disco, sem perder o que foi digitado.
         .onChange(of: [slack.configured, jira.configured]) {
             let saved = Credentials.load()

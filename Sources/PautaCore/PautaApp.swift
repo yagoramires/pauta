@@ -27,7 +27,10 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
     private(set) lazy var poller = Poller(jira: jiraStore, slack: slackStore, github: githubStore,
                                           interval: TimeInterval(prefsStore.prefs.refreshMinutes * 60))
     /// Os fluxos "Conectar" moram aqui (e não na tela): continuam com o popover fechado, enquanto o usuário copia o token no navegador.
-    private(set) lazy var connector = Connector(save: { [weak self] in self?.save($0) }, open: { [weak self] in self?.open($0) })
+    private(set) lazy var connector = Connector(save: { [weak self] in self?.save($0) }, open: { [weak self] in self?.open($0) },
+                                                pasteboard: pasteboard)
+    /// A vigia do "Conectar" lê esta; o selftest passa uma própria (nunca a do usuário).
+    private let pasteboard: NSPasteboard
     let shell: Shell
     private var subscriptions = Set<AnyCancellable>()
     private var settingsWindow: NSWindow?
@@ -35,6 +38,8 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
     /// Abre links (Slack, páginas de token); o selftest troca por um gravador.
     var open: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
+    /// Hospedado: o "Ligar" das notificações vai para a tela de Permissões do NeyHub.
+    public var onOpenPermissions: (() -> Void)?
     /// Hospedado: o NeyHub mostra a tela do Pauta (`NeyHost.showScreen`). nil = NeyHub sem esse pedido.
     public var onShowScreen: (() -> Void)?
     /// Avulso: o Updater já preparou uma versão, que entra quando o app fechar.
@@ -48,7 +53,9 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
     }
 
     /// `paths`, `center` e `github` só mudam no selftest: pasta temporária, centro de notificações e `gh` falsos.
-    init(defaults: UserDefaults, hosted: Bool, version: String, paths: AppPaths, center: NotifyCenter?, github: GitHubStore) {
+    init(defaults: UserDefaults, hosted: Bool, version: String, paths: AppPaths, center: NotifyCenter?, github: GitHubStore,
+         pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
         self.defaults = defaults
         self.hosted = hosted
         self.paths = paths
@@ -68,6 +75,8 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
         super.init()
         slackStore.open = { [weak self] in self?.open($0) }
         shell.relaunch = { [weak self] in if self?.hosted == false { self?.onRelaunch?() } }
+        shell.openPermissions = { [weak self] in self?.onOpenPermissions?() }
+        shell.checkPermission = { [weak self] in self?.checkPermission() }
         shell.presence = hosted ? nil : presence
         shell.onPresence = { [weak self] presence in
             guard let self else { return }
@@ -98,6 +107,7 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
         slackStore.reconfigure(credentials)
         notifier.onOpen = { [weak self] id, action in self?.handleNotification(identifier: id, actionIdentifier: action) }
         notifier.start()
+        checkPermission()
         poller.start()
         // Para funcionar "sozinho": na primeira vez já entra nos itens de início. No NeyHub o login é dele.
         if !hosted, !defaults.bool(forKey: "loginItemOffered") {
@@ -148,6 +158,13 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
             .frame(width: 420).grafiteWindow())
     }
 
+    /// Hospedado sem permissão de notificações: "Notificações desligadas · Ligar" nos ajustes e no rodapé da tela. Confere ao
+    /// iniciar e a cada abertura dos ajustes; nunca pede ao sistema.
+    func checkPermission() {
+        guard hosted else { return }
+        notifier.checkPermission { [weak self] allowed in self?.shell.notificationsOff = !allowed }
+    }
+
     /// Os avisos do Pauta não têm botões: só o toque, que abre a mensagem.
     public func notificationCategories() -> Set<UNNotificationCategory> { [] }
 
@@ -157,10 +174,12 @@ public final class PautaApp: NSObject, NSPopoverDelegate {
     public func handleNotification(identifier: String, actionIdentifier: String) {
         guard identifier.hasPrefix(Notifier.prefix), actionIdentifier != UNNotificationDismissActionIdentifier else { return }
         if hosted, let onShowScreen, Presence.load(defaults, hasScreen: true).normalized(hasScreen: true).screen { onShowScreen() }
-        // Sem o id no mapa (resumo, aviso antigo ou fora dos 200): só o Slack.
-        guard let link = notifier.links.link(for: identifier) else { return slackStore.openSlack() }
         let parts = identifier.dropFirst(Notifier.prefix.count).split(separator: ":", maxSplits: 1).map(String.init)
-        slackStore.openLink(channel: parts.first, ts: parts.count > 1 ? parts[1] : nil, permalink: link.isEmpty ? nil : URL(string: link))
+        // Fora do mapa (aviso antigo ou além dos 200) mas com cara de "<canal>:<ts>": abre a conversa sem o permalink.
+        // O resumo (e qualquer outra coisa) só abre o Slack.
+        guard parts.count == 2, Double(parts[1]) != nil else { return slackStore.openSlack() }
+        let link = notifier.links.link(for: identifier) ?? ""
+        slackStore.openLink(channel: parts[0], ts: parts[1], permalink: link.isEmpty ? nil : URL(string: link))
     }
 
     // MARK: Avulso
@@ -325,6 +344,10 @@ final class Shell: ObservableObject {
     @Published var state: PopoverState
     /// Avulso: o modo atual; nil hospedado.
     @Published var presence: Presence?
+    /// Hospedado sem permissão de notificações.
+    @Published var notificationsOff = false
+    var openPermissions: () -> Void = {}
+    var checkPermission: () -> Void = {}
     var onPresence: (Presence) -> Void = { _ in }
     var relaunch: () -> Void = {}
 

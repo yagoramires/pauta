@@ -24,6 +24,8 @@ final class GitHubStore: ObservableObject {
     /// nil = sem checks nem "Seus PRs" (os testes antigos não chamam a GraphQL).
     private let details: ((String) async throws -> PullDetails)?
     private var inflight: Task<Void, Never>?
+    /// Última falha da GraphQL: o log só ganha uma linha quando ela muda (senão uma a cada 2 min).
+    private var detailsFailure: String?
 
     init(readToken: @escaping () async -> String? = GitHubToken.read,
          search: @escaping (String) async throws -> [PullRequest] = { try await GitHubClient().reviewRequests(token: $0) },
@@ -57,8 +59,12 @@ final class GitHubStore: ObservableObject {
                     let more = try await details(token)
                     found = found.map { pr in var pr = pr; pr.checks = more.checks[pr.id]; return pr }
                     mine = more.mine
+                    detailsFailure = nil
                 } catch {
-                    debugLog("github: checks e seus PRs: \(error)")
+                    // Regra única: sem a GraphQL não há checks nem "Seus PRs" (nada velho fingindo estar atualizado).
+                    mine = []
+                    if "\(error)" != detailsFailure { debugLog("github: checks e seus PRs: \(error)") }
+                    detailsFailure = "\(error)"
                 }
             }
             items = found

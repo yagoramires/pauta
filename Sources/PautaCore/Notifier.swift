@@ -5,13 +5,17 @@ import UserNotifications
 protocol NotifyCenter: AnyObject {
     func setDelegate(_ delegate: UNUserNotificationCenterDelegate)
     func requestAuthorization(_ done: @escaping (Bool, Error?) -> Void)
+    func authorization(_ done: @escaping (UNAuthorizationStatus) -> Void)
     func post(_ request: UNNotificationRequest)
+    func removeDelivered(_ identifiers: [String])
 }
 
 extension UNUserNotificationCenter: NotifyCenter {
     func setDelegate(_ delegate: UNUserNotificationCenterDelegate) { self.delegate = delegate }
     func requestAuthorization(_ done: @escaping (Bool, Error?) -> Void) { requestAuthorization(options: [.alert, .sound], completionHandler: done) }
+    func authorization(_ done: @escaping (UNAuthorizationStatus) -> Void) { getNotificationSettings { done($0.authorizationStatus) } }
     func post(_ request: UNNotificationRequest) { add(request) }
+    func removeDelivered(_ identifiers: [String]) { removeDeliveredNotifications(withIdentifiers: identifiers) }
 }
 
 /// Id da notificação → permalink da mensagem, em `avisos.json`. No NeyHub o toque chega só com o id (sem o userInfo),
@@ -83,7 +87,20 @@ final class Notifier {
         center.setDelegate(delegate)
     }
 
-    func stop() { stopped = true }
+    /// Desinstalado no NeyHub: para de avisar e tira da Central os avisos do Pauta que ficaram lá (os do mapa).
+    func stop() {
+        stopped = true
+        if hosted { center.removeDelivered(links.entries.map(\.id)) }
+    }
+
+    /// Hospedado: só consulta (quem pede é a tela de Permissões do NeyHub). `done` chega na main.
+    func checkPermission(_ done: @escaping (Bool) -> Void) {
+        guard !stopped else { return }
+        center.authorization { status in
+            let allowed = status == .authorized || status == .provisional
+            DispatchQueue.main.async { done(allowed) }
+        }
+    }
 
     /// Só avisa com o Slack fechado (o app dele já avisa sozinho).
     func postIfSlackClosed(_ items: [SlackItem]) { if !Self.slackRunning { post(items) } }

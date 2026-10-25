@@ -23,11 +23,14 @@ final class Connector: ObservableObject {
     private let open: (URL) -> Void
     private let validateSlack: (String) async throws -> String
     private let validateJira: (Credentials) async throws -> String
+    private let pasteboard: NSPasteboard
 
     init(save: @escaping (Credentials) -> Void,
          open: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) },
          validateSlack: @escaping (String) async throws -> String = Connector.checkSlack,
-         validateJira: @escaping (Credentials) async throws -> String = Connector.checkJira) {
+         validateJira: @escaping (Credentials) async throws -> String = Connector.checkJira,
+         pasteboard: NSPasteboard = .general) {
+        self.pasteboard = pasteboard
         self.save = save
         self.open = open
         self.validateSlack = validateSlack
@@ -55,7 +58,7 @@ final class Connector: ObservableObject {
     private func start(_ service: Service, page: URL) {
         stop(service)
         update(service) { $0 = Flow(waiting: true) }
-        let catcher = TokenCatcher(service: service)
+        let catcher = TokenCatcher(service: service, pasteboard: pasteboard)
         catcher.onToken = { [weak self] token, count in self?.validate(service, token, count) }
         catcher.onTimeout = { [weak self] in self?.timedOut(service) }
         catchers[service] = catcher

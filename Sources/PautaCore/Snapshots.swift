@@ -46,6 +46,8 @@ enum Snapshots {
         let shell = Shell(state: PopoverState(version: "0.2.0", hosted: false, updateReady: true))
         shell.presence = Presence(screen: false, menuBar: true)
         let hostedShell = Shell(state: PopoverState(version: "0.2.0", hosted: true, updateReady: true))
+        // NeyHub sem a permissão de notificações: o aviso com "Ligar" nos ajustes e no rodapé da tela.
+        hostedShell.notificationsOff = true
         func popover(slack: SlackStore, jira: JiraStore, github: GitHubStore, prefs: PrefsStore? = nil, showSettings: Bool = false, slackShowAll: Bool = false,
                      jiraFreeOpen: Bool = false, advancedOpen: Bool = false, filter: ServiceFilter = .all, search: String = "",
                      maxHeight: CGFloat = PopoverView.defaultMaxHeight, shell custom: Shell? = nil) -> PopoverView {
@@ -157,6 +159,7 @@ enum Snapshots {
         render("tela-app-erro.png", screen(slack: broken, jira: brokenJira, github: github))
         render("tela-app-ajustes.png", screen(settings: true))
         render("tela-app-neyhub-ajustes.png", screen(shell: hostedShell, settings: true))
+        render("tela-app-neyhub.png", screen(shell: hostedShell))
         // Configurações (janela do avulso pelo ⌘, e card no NeyHub).
         func settings(_ custom: Shell) -> some View {
             SettingsView(slack: slack, jira: jira, connector: connector, prefs: defaultPrefs, shell: custom, onSave: { _ in })

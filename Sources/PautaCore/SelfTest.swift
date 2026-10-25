@@ -49,6 +49,7 @@ enum SelfTest {
             hostedApp()
             noticeTapAfterRestart()
             appStop()
+            permissionHint()
         }
         popoverGating()
     }
@@ -932,7 +933,8 @@ enum SelfTest {
         precondition(store.items.map(\.checks) == [.passing, .failing(2), nil] && store.mine == found.mine && store.error == nil)
         fail = true
         block { await store.refresh() }
-        precondition(store.items.count == 3 && store.items[0].checks == nil && store.mine == found.mine && store.error == nil)
+        // Regra única quando a GraphQL falha: nem checks nem "Seus PRs" velhos; as revisões continuam e não vira erro.
+        precondition(store.items.count == 3 && store.items[0].checks == nil && store.mine.isEmpty && store.error == nil)
         // Sem gh: nem revisões nem seus PRs.
         let none = GitHubStore(readToken: { nil }, search: { _ in [] }, details: { _ in found })
         block { await none.refresh() }
@@ -941,20 +943,29 @@ enum SelfTest {
 
     /// Centro de notificações falso: conta o delegate e os pedidos de permissão e guarda o que seria postado.
     private final class FakeCenter: NotifyCenter {
-        var delegates = 0, asks = 0
+        var delegates = 0, asks = 0, checks = 0
+        var status = UNAuthorizationStatus.authorized
         var posted: [UNNotificationRequest] = []
+        var removed: [String] = []
         func setDelegate(_ delegate: UNUserNotificationCenterDelegate) { delegates += 1 }
         func requestAuthorization(_ done: @escaping (Bool, Error?) -> Void) { asks += 1; done(true, nil) }
+        func authorization(_ done: @escaping (UNAuthorizationStatus) -> Void) { checks += 1; done(status) }
         func post(_ request: UNNotificationRequest) { posted.append(request) }
+        func removeDelivered(_ identifiers: [String]) { removed += identifiers }
     }
+
+    /// A resposta da permissão chega na main pelo DispatchQueue: gira o run loop um pouco.
+    private static func spin() { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
 
     /// Pasta e padrões temporários: o selftest nunca lê nem grava o `Application Support/Pauta` nem os padrões de verdade.
     private static let hubRoot = FileManager.default.temporaryDirectory.appendingPathComponent("pauta-hub-\(UUID().uuidString)")
     private static let hubSuite = "pauta-selftest-hub"
 
-    @MainActor private static func makeApp(hosted: Bool, center: FakeCenter, defaults: UserDefaults? = nil) -> PautaApp {
+    @MainActor private static func makeApp(hosted: Bool, center: FakeCenter, defaults: UserDefaults? = nil,
+                                           pasteboard: NSPasteboard = .general) -> PautaApp {
         let app = PautaApp(defaults: defaults ?? UserDefaults(suiteName: hubSuite)!, hosted: hosted, version: "9.9.9",
-                           paths: AppPaths(root: hubRoot), center: center, github: GitHubStore(readToken: { nil }, search: { _ in [] }))
+                           paths: AppPaths(root: hubRoot), center: center, github: GitHubStore(readToken: { nil }, search: { _ in [] }),
+                           pasteboard: pasteboard)
         precondition(app.paths.support.path.hasPrefix(hubRoot.path) && Credentials.url.path.hasPrefix(hubRoot.path)
                      && app.paths.notices.lastPathComponent == "avisos.json")
         return app
@@ -1002,7 +1013,7 @@ enum SelfTest {
     /// Hospedado: nunca define o delegate, nunca pede permissão, não tem categorias e ignora o que não é do Pauta.
     @MainActor private static func hostedApp() {
         let saved = Credentials.url
-        defer { Credentials.url = saved }
+        defer { Credentials.url = saved; try? FileManager.default.removeItem(at: hubRoot) }
         let defaults = UserDefaults(suiteName: hubSuite)!
         defaults.removePersistentDomain(forName: hubSuite)
         defer { defaults.removePersistentDomain(forName: hubSuite) }
@@ -1063,6 +1074,10 @@ enum SelfTest {
         opened = []
         app.handleNotification(identifier: "local.pauta.resumo-1", actionIdentifier: UNNotificationDefaultActionIdentifier)
         precondition(opened == [slackApp] && shown == 2)
+        // Fora do mapa mas com cara de "<canal>:<ts>" (aviso antigo, ou além dos 200): abre a conversa sem permalink.
+        opened = []
+        app.handleNotification(identifier: "local.pauta.C9:1009.000100", actionIdentifier: UNNotificationDefaultActionIdentifier)
+        precondition(opened.count == 1 && opened[0].absoluteString.contains("id=C9") && opened[0].absoluteString.contains("message=1009.000100"), "\(opened)")
         // Avulso nunca chama a tela do NeyHub.
         let solo = makeApp(hosted: false, center: FakeCenter())
         var soloShown = 0
@@ -1081,16 +1096,54 @@ enum SelfTest {
         defaults.removePersistentDomain(forName: hubSuite)
         defer { defaults.removePersistentDomain(forName: hubSuite) }
         let center = FakeCenter()
-        let app = makeApp(hosted: true, center: center)
+        // Área de transferência própria: a vigia nunca olha a do usuário.
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let app = makeApp(hosted: true, center: center, pasteboard: board)
         var opened: [URL] = []
         app.open = { opened.append($0) }
         app.start()
+        app.notifier.post([slackMessage(3)])
         app.connector.connectSlack()
         precondition(app.connector.catching && app.connector.slack.waiting && opened.count == 1 && app.poller.timerInterval != nil)
         app.stop()
         precondition(!app.connector.catching && !app.connector.slack.waiting && app.poller.timerInterval == nil)
-        app.notifier.post([slackMessage(3)])
-        precondition(center.posted.isEmpty)
+        // Hospedado, desinstalar tira da Central os avisos do Pauta (os do mapa).
+        precondition(center.removed == ["local.pauta.C3:1003.000100"], "\(center.removed)")
+        app.notifier.post([slackMessage(4)])
+        precondition(center.posted.count == 1)
+    }
+
+    /// Hospedado sem permissão: consulta (nunca pede) ao iniciar e ao abrir os ajustes; "Ligar" vai às Permissões do NeyHub.
+    @MainActor private static func permissionHint() {
+        let saved = Credentials.url
+        defer { Credentials.url = saved; try? FileManager.default.removeItem(at: hubRoot) }
+        let defaults = UserDefaults(suiteName: hubSuite)!
+        defaults.removePersistentDomain(forName: hubSuite)
+        defer { defaults.removePersistentDomain(forName: hubSuite) }
+        let center = FakeCenter()
+        center.status = .denied
+        let app = makeApp(hosted: true, center: center)
+        var asked = 0
+        app.onOpenPermissions = { asked += 1 }
+        app.start()
+        spin()
+        precondition(center.checks == 1 && center.asks == 0 && app.shell.notificationsOff)
+        app.shell.openPermissions()
+        precondition(asked == 1 && center.asks == 0)
+        // Liberou nas Permissões do NeyHub: some na próxima abertura dos ajustes.
+        center.status = .authorized
+        app.shell.checkPermission()
+        spin()
+        precondition(center.checks == 2 && !app.shell.notificationsOff)
+        app.stop()
+        // Avulso não mostra o aviso: ele mesmo pede ao sistema na primeira notificação.
+        let soloCenter = FakeCenter()
+        soloCenter.status = .denied
+        let solo = makeApp(hosted: false, center: soloCenter)
+        solo.checkPermission()
+        spin()
+        precondition(soloCenter.checks == 0 && !solo.shell.notificationsOff)
     }
 
     private static func popoverGating() {

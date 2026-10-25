@@ -12,7 +12,7 @@ struct Prefs: Equatable {
 
     static let refreshChoices = [1, 2, 5]
 
-    static func load(_ defaults: UserDefaults = .standard) -> Prefs {
+    static func load(_ defaults: UserDefaults) -> Prefs {
         var p = Prefs()
         func flag(_ key: String, _ fallback: Bool) -> Bool { defaults.object(forKey: key) as? Bool ?? fallback }
         p.channelMentions = flag("prefs.channelMentions", p.channelMentions)
@@ -24,7 +24,7 @@ struct Prefs: Equatable {
         return p
     }
 
-    func save(_ defaults: UserDefaults = .standard) {
+    func save(_ defaults: UserDefaults) {
         defaults.set(channelMentions, forKey: "prefs.channelMentions")
         defaults.set(freeCards, forKey: "prefs.freeCards")
         defaults.set(density.rawValue, forKey: "prefs.density")
@@ -39,7 +39,7 @@ final class PrefsStore: ObservableObject {
     private let defaults: UserDefaults
     @Published var prefs: Prefs { didSet { prefs.save(defaults) } }
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults) {
         self.defaults = defaults
         prefs = Prefs.load(defaults)
     }
