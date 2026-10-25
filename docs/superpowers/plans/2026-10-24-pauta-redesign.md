@@ -38,8 +38,7 @@ XCTest).
 - **Textos** em pt-BR, com as frases exatas definidas nas tarefas.
 - **Commits:**
   - numa branch `pauta`, criada a partir de `main` antes da Tarefa 1;
-  - mensagens no estilo do repo (`feat: …`, em português), terminando com
-    `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`;
+  - mensagens no estilo do repo (`feat: …`, em português), sem coautoria;
   - sem push.
 
 **Verificação padrão** (vale para "rodar os testes" em toda tarefa):

@@ -26,7 +26,7 @@ para o visual.
 
 - **Branch e commits:**
   - branch `pauta`;
-  - commits em português no estilo do repo, terminando com `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`;
+  - commits em português no estilo do repo, sem coautoria;
   - sem push.
 - **Estilo grafite:**
   - fonte do sistema, sem mono nem serifa, e nada de CAIXA ALTA;
