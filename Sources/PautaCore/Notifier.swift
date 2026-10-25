@@ -87,11 +87,9 @@ final class Notifier {
         center.setDelegate(delegate)
     }
 
-    /// Desinstalado no NeyHub: para de avisar e tira da Central os avisos do Pauta que ficaram lá (os do mapa).
-    func stop() {
-        stopped = true
-        if hosted { center.removeDelivered(links.entries.map(\.id)) }
-    }
+    /// Desinstalado no NeyHub: para de avisar. Os avisos na Central ficam: sair do NeyHub também chama stop(), e quem
+    /// tira ao desinstalar é o NeyHub.
+    func stop() { stopped = true }
 
     /// Hospedado: só consulta (quem pede é a tela de Permissões do NeyHub). `done` chega na main.
     func checkPermission(_ done: @escaping (Bool) -> Void) {

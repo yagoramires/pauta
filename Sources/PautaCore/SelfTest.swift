@@ -1108,8 +1108,8 @@ enum SelfTest {
         precondition(app.connector.catching && app.connector.slack.waiting && opened.count == 1 && app.poller.timerInterval != nil)
         app.stop()
         precondition(!app.connector.catching && !app.connector.slack.waiting && app.poller.timerInterval == nil)
-        // Hospedado, desinstalar tira da Central os avisos do Pauta (os do mapa).
-        precondition(center.removed == ["local.pauta.C3:1003.000100"], "\(center.removed)")
+        // Os avisos na Central quem tira é o NeyHub ao desinstalar: sair também chama stop() e eles ficam.
+        precondition(center.removed.isEmpty, "stop() tirou avisos da Central: \(center.removed)")
         app.notifier.post([slackMessage(4)])
         precondition(center.posted.count == 1)
     }
