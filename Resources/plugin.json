@@ -1,0 +1,7 @@
+{
+  "id": "local.pauta",
+  "name": "Pauta",
+  "hasScreen": true,
+  "permissions": ["notifications"],
+  "binary": "libPautaPlugin.dylib"
+}

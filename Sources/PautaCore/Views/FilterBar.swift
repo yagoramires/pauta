@@ -1,7 +1,8 @@
+import NeyKit
 import SwiftUI
 
 /// Topo do popover (mockup `inputs.html`, opção 3): a lupa redonda e as pílulas "Tudo N" e logo + N por serviço conectado.
-/// A selecionada é `.primary` com texto e logo invertidos; as outras, `.primary` a 5% com o logo na cor da marca.
+/// A selecionada é clara com texto e logo escuros; as outras, no fundo de card com o logo na cor da marca.
 /// Com a busca aberta (lupa ou ⌘F), a linha de cima vira o campo e as pílulas descem.
 struct FilterBar: View {
     @Binding var filter: ServiceFilter
@@ -19,7 +20,7 @@ struct FilterBar: View {
                     Button { searchOpen = true } label: {
                         Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium))
                             .frame(width: 28, height: 26)
-                            .background(Capsule().fill(Color.primary.opacity(0.05)))
+                            .background(Capsule().fill(Grafite.card))
                             .contentShape(Capsule())
                     }
                     .buttonStyle(.plain).keyboardShortcut("f", modifiers: .command)
@@ -36,21 +37,21 @@ struct FilterBar: View {
 
     private var field: some View {
         HStack(spacing: 7) {
-            Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").font(.system(size: 12, weight: .medium)).foregroundStyle(Grafite.muted)
             TextField("Filtrar por pessoa, canal, card", text: $query)
-                .textFieldStyle(.plain).font(.system(size: 13)).tint(.primary)
+                .textFieldStyle(.plain).font(.system(size: 13)).tint(Grafite.accent)
                 .focused($focused)
                 .onExitCommand(perform: clearOrClose)
                 // O campo acabou de entrar na tela: o foco só pega no ciclo seguinte.
                 .onAppear { DispatchQueue.main.async { focused = true } }
             Button(action: clearOrClose) {
-                Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(.secondary)
+                Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(Grafite.muted)
             }
             .buttonStyle(.plain).help(query.isEmpty ? "Fechar busca" : "Limpar")
             .accessibilityLabel(query.isEmpty ? "Fechar busca" : "Limpar")
         }
         .padding(.horizontal, 12).frame(height: 30)
-        .background(Capsule().fill(Color.primary.opacity(0.05)))
+        .background(Capsule().fill(Grafite.card))
     }
 
     /// ⊗ e Esc: limpa o texto; com ele já vazio, fecha a busca.
@@ -60,7 +61,7 @@ struct FilterBar: View {
 
     private func pill(_ option: ServiceFilter) -> some View {
         let selected = filter == option
-        let ink = selected ? Color(nsColor: .windowBackgroundColor) : Color.primary
+        let ink = selected ? Grafite.onAccent : Grafite.text
         let count = counts[option] ?? 0
         return Button { filter = option } label: {
             HStack(spacing: 5) {
@@ -74,7 +75,7 @@ struct FilterBar: View {
             .font(.system(size: 12, weight: selected ? .semibold : .regular))
             .foregroundStyle(ink)
             .padding(.horizontal, 10).frame(height: 26)
-            .background(Capsule().fill(selected ? Color.primary : Color.primary.opacity(0.05)))
+            .background(Capsule().fill(selected ? Grafite.text : Grafite.card))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)

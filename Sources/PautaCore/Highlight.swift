@@ -78,3 +78,30 @@ func freeCardsText(_ count: Int) -> String {
 func showsSection(connected: Bool, loaded: Bool, failed: Bool, rows: Int) -> Bool {
     !connected || !loaded || failed || rows > 0
 }
+
+/// Checks de um PR na tela: o texto e o tom (true verde, false vermelho, nil apagado). nil sem checks.
+func checksText(_ checks: Checks?) -> (text: String, ok: Bool?)? {
+    switch checks {
+    case nil: nil
+    case .passing: ("✓ checks", true)
+    case .failing(let n): (n == 1 ? "✕ 1 falhou" : "✕ \(n) falharam", false)
+    case .pending: ("checks rodando", nil)
+    }
+}
+
+func approvalsText(_ count: Int) -> String {
+    count == 0 ? "sem aprovação" : count == 1 ? "1 aprovação" : "\(count) aprovações"
+}
+
+/// "Seus PRs": o que falta para o merge, do mais urgente para o mais tranquilo.
+func prStatusText(_ pr: PullRequest) -> (text: String, ok: Bool?) {
+    if pr.reviewDecision == "CHANGES_REQUESTED" { return ("✕ pediram mudanças", false) }
+    if case .failing? = pr.checks, let failed = checksText(pr.checks) { return failed }
+    if pr.checks == .pending { return ("checks rodando", nil) }
+    if pr.reviewDecision == "REVIEW_REQUIRED" { return ("esperando revisão", nil) }
+    if pr.reviewDecision == "APPROVED" || pr.checks == .passing { return ("✓ pronto pra merge", true) }
+    return ("aberto", nil)
+}
+
+/// "web-app #4821": o repositório sem o dono e o número, como no mockup da tela.
+func prPlace(_ pr: PullRequest) -> String { "\(pr.repo.split(separator: "/").last.map(String.init) ?? pr.repo) #\(pr.number)" }

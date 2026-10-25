@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// Seção do Slack: não lidas (DMs e menções), sem a que está no destaque. Sem token, só o "Conectar Slack".
@@ -47,7 +48,7 @@ struct SlackView: View {
         VStack(alignment: .leading, spacing: 4) {
             SectionTitle("Slack") {
                 if !rows.isEmpty {
-                    Button("Marcar tudo como visto") { store.markSeen(items) }.buttonStyle(.link).foregroundStyle(.secondary)
+                    Button("Marcar tudo como visto") { store.markSeen(items) }.buttonStyle(.link).foregroundStyle(Grafite.muted)
                     Text(sectionCount(rows.count, highlighted: rows.count < items.count))
                 }
             }
@@ -62,7 +63,7 @@ struct SlackView: View {
             Banner {
                 if store.error == .unauthorized && store.notice == nil {
                     Text("Token do Slack inválido.")
-                    Button("Ajustes", action: openSettings).buttonStyle(.link).foregroundStyle(.secondary)
+                    Button("Ajustes", action: openSettings).buttonStyle(.link).foregroundStyle(Grafite.muted)
                 } else {
                     Text(String((store.notice ?? store.error?.userMessage ?? "").prefix(120)))
                 }
@@ -84,12 +85,12 @@ struct SlackView: View {
             ForEach(shown) { item in
                 CompactRow(service: .slack, name: item.userName.split(separator: " ").first.map(String.init),
                            text: item.text, query: query, dim: isOld(item.ts.date), action: { store.open(item) }) {
-                    Text(agoShort(item.ts.date)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize()
+                    Text(agoShort(item.ts.date)).font(.system(size: 11.5)).foregroundStyle(Grafite.muted).fixedSize()
                 }
             }
             if hidden > 0 {
                 Button(showAll ? "Ver menos" : "Ver mais \(hidden)") { showAll.toggle() }
-                    .buttonStyle(.link).foregroundStyle(.secondary).font(.callout).padding(.top, 4)
+                    .buttonStyle(.link).foregroundStyle(Grafite.muted).font(.callout).padding(.top, 4)
             }
         }
     }

@@ -51,6 +51,14 @@ final class Poller {
         refreshNow(reason: "início")
     }
 
+    /// Desinstalar no NeyHub: sem timer nem observador do acordar. Uma busca já em andamento só termina.
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        if let wake { NSWorkspace.shared.notificationCenter.removeObserver(wake) }
+        wake = nil
+    }
+
     /// Os três em paralelo.
     func refreshNow(reason: String = "manual") {
         debugLog("poller: rodada (\(reason)) · jira \(jira.configured ? "ativo" : "sem credenciais") · slack \(slack.configured ? "ativo" : "sem credenciais") · github")

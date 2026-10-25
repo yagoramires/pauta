@@ -10,7 +10,7 @@ struct Credentials: Codable, Equatable {
     var jiraBoardId: Int?
     var slackToken: String = ""
 
-    static var url = AppPaths.support.appendingPathComponent("credentials.json")
+    static var url = AppPaths.real.credentials
 
     static func load() -> Credentials {
         guard let data = try? Data(contentsOf: url) else { return Credentials() }

@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// `Pauta --snapshots <pasta>`: renderiza as telas em PNG (2x) com dados de mentira, sem rede nem credenciais reais.
@@ -13,8 +14,9 @@ enum Snapshots {
         var ok = true
         func render<V: View>(_ name: String, _ view: V, appearance: NSAppearance.Name? = nil) {
             // NSHostingView (e não ImageRenderer): só ele desenha os controles nativos (Menu, botões, campos).
-            let host = NSHostingView(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
-            if let appearance { host.appearance = NSAppearance(named: appearance) }
+            // Sempre escuro: o tema Grafite não tem versão clara (o `appearance` antigo ficou só nos nomes dos arquivos).
+            let host = NSHostingView(rootView: view.background(Grafite.bg.ignoresSafeArea()))
+            host.appearance = NSAppearance(named: .darkAqua)
             host.frame = NSRect(origin: .zero, size: host.fittingSize)
             host.layoutSubtreeIfNeeded()
             guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(host.frame.width * 2),
@@ -40,10 +42,14 @@ enum Snapshots {
         defer { snapshotDefaults.removePersistentDomain(forName: suite) }
         func tempPrefs() -> PrefsStore { PrefsStore(defaults: snapshotDefaults) }
         let defaultPrefs = tempPrefs()
+        // Avulso (com uma atualização pronta, para mostrar a linha) e hospedado no NeyHub.
+        let shell = Shell(state: PopoverState(version: "0.2.0", hosted: false, updateReady: true))
+        shell.presence = Presence(screen: false, menuBar: true)
+        let hostedShell = Shell(state: PopoverState(version: "0.2.0", hosted: true, updateReady: true))
         func popover(slack: SlackStore, jira: JiraStore, github: GitHubStore, prefs: PrefsStore? = nil, showSettings: Bool = false, slackShowAll: Bool = false,
                      jiraFreeOpen: Bool = false, advancedOpen: Bool = false, filter: ServiceFilter = .all, search: String = "",
-                     maxHeight: CGFloat = PopoverView.defaultMaxHeight) -> PopoverView {
-            PopoverView(slack: slack, jira: jira, github: github, connector: connector, prefs: prefs ?? defaultPrefs, onSave: { _ in },
+                     maxHeight: CGFloat = PopoverView.defaultMaxHeight, shell custom: Shell? = nil) -> PopoverView {
+            PopoverView(slack: slack, jira: jira, github: github, connector: connector, prefs: prefs ?? defaultPrefs, shell: custom ?? shell, onSave: { _ in },
                         showSettings: showSettings, slackShowAll: slackShowAll, jiraFreeOpen: jiraFreeOpen,
                         jiraExpanded: ["ACME-1330"], advancedOpen: advancedOpen, filter: filter,
                         searchQuery: search, maxHeight: maxHeight)
@@ -54,7 +60,6 @@ enum Snapshots {
         let jira = fakeStore()
         let github = fakeGitHubStore()
         render("tela-tudo.png", popover(slack: slack, jira: jira, github: github))
-        render("tela-tudo-claro.png", popover(slack: slack, jira: jira, github: github, maxHeight: 4000), appearance: .aqua)
         render("tela-tudo-escuro.png", popover(slack: slack, jira: jira, github: github, maxHeight: 4000), appearance: .darkAqua)
         render("tela-filtro-slack.png", popover(slack: slack, jira: jira, github: github, filter: .slack, maxHeight: 4000))
         render("tela-filtro-revisoes.png", popover(slack: slack, jira: jira, github: github, filter: .github, maxHeight: 4000))
@@ -83,11 +88,11 @@ enum Snapshots {
         // Slack aguardando a cópia do token; o Jira, com um erro de validação anterior.
         let waiting = Connector(save: { _ in }, open: { _ in })
         waiting.slack = Connector.Flow(waiting: true, error: connectErrorMessage(APIError.unauthorized, service: .slack))
-        let waitingView = PopoverView(slack: offSlack, jira: offJira, github: github, connector: waiting, prefs: defaultPrefs, onSave: { _ in })
+        let waitingView = PopoverView(slack: offSlack, jira: offJira, github: github, connector: waiting, prefs: defaultPrefs, shell: shell, onSave: { _ in })
         render("tela-aguardando.png", waitingView)
         let waitingJira = Connector(save: { _ in }, open: { _ in })
         waitingJira.jira = Connector.Flow(waiting: true)
-        render("tela-aguardando-jira.png", PopoverView(slack: slack, jira: offJira, github: github, connector: waitingJira, prefs: defaultPrefs, onSave: { _ in }))
+        render("tela-aguardando-jira.png", PopoverView(slack: slack, jira: offJira, github: github, connector: waitingJira, prefs: defaultPrefs, shell: shell, onSave: { _ in }))
 
         // Estados de erro e vazios.
         let broken = fakeSlackStore()
@@ -132,9 +137,33 @@ enum Snapshots {
         let compact = tempPrefs()
         compact.prefs.density = .compact
         render("tela-compacta.png", popover(slack: slack, jira: jira, github: github, prefs: compact, maxHeight: 4000))
-        render("tela-compacta-claro.png", popover(slack: slack, jira: jira, github: github, prefs: compact, maxHeight: 4000), appearance: .aqua)
-        render("ajustes-claro.png", popover(slack: slack, jira: offJira, github: github, showSettings: true), appearance: .aqua)
         render("ajustes-avancado.png", popover(slack: slack, jira: jira, github: github, showSettings: true, advancedOpen: true))
+        render("ajustes-neyhub.png", popover(slack: slack, jira: offJira, github: github, showSettings: true, shell: hostedShell))
+
+        // Tela de app (janela do NeyHub ou do avulso no modo Janela), no tamanho do mockup e estreita.
+        func screen(slack s: SlackStore? = nil, jira j: JiraStore? = nil, github g: GitHubStore? = nil, shell custom: Shell? = nil,
+                    filter: ServiceFilter = .all, query: String = "", settings: Bool = false, freeOpen: Bool = false,
+                    size: CGSize = CGSize(width: 1060, height: 640)) -> some View {
+            ScreenView(slack: s ?? slack, jira: j ?? jira, github: g ?? github, connector: connector, prefs: defaultPrefs, shell: custom ?? shell,
+                       onSave: { _ in }, filter: filter, query: query, showSettings: settings, freeOpen: freeOpen)
+                .frame(width: size.width, height: size.height)
+        }
+        render("tela-app.png", screen())
+        render("tela-app-livres.png", screen(freeOpen: true))
+        render("tela-app-estreita.png", screen(size: CGSize(width: 560, height: 900)))
+        render("tela-app-busca.png", screen(query: "checkout"))
+        render("tela-app-jira.png", screen(filter: .jira, freeOpen: true))
+        render("tela-app-conectar.png", screen(slack: offSlack, jira: offJira, github: noGh))
+        render("tela-app-erro.png", screen(slack: broken, jira: brokenJira, github: github))
+        render("tela-app-ajustes.png", screen(settings: true))
+        render("tela-app-neyhub-ajustes.png", screen(shell: hostedShell, settings: true))
+        // Configurações (janela do avulso pelo ⌘, e card no NeyHub).
+        func settings(_ custom: Shell) -> some View {
+            SettingsView(slack: slack, jira: jira, connector: connector, prefs: defaultPrefs, shell: custom, onSave: { _ in })
+                .frame(width: 420).grafiteWindow()
+        }
+        render("configuracoes.png", settings(shell))
+        render("configuracoes-neyhub.png", settings(hostedShell))
 
         // Ícone da barra (fundo escuro simulando o tema): todos os estados.
         let bars: [(Int, Int, Int, Bool)] = [(0, 0, 0, false), (3, 2, 1, false), (0, 0, 5, false), (0, 4, 0, false),
@@ -150,14 +179,20 @@ enum Snapshots {
 
     private static func fakeGitHubStore() -> GitHubStore {
         let store = GitHubStore(readToken: { nil }, search: { _ in [] })
-        func pr(_ repo: String, _ number: Int, _ title: String, _ author: String, _ ago: Double, draft: Bool = false) -> PullRequest {
+        func pr(_ repo: String, _ number: Int, _ title: String, _ author: String, _ ago: Double, draft: Bool = false,
+                checks: Checks? = nil, approvals: Int? = nil, decision: String? = nil) -> PullRequest {
             PullRequest(repo: repo, number: number, title: title, author: author, updatedAt: Date().addingTimeInterval(-ago),
-                        url: URL(string: "https://github.com/\(repo)/pull/\(number)")!, draft: draft)
+                        url: URL(string: "https://github.com/\(repo)/pull/\(number)")!, draft: draft, checks: checks,
+                        approvals: approvals, reviewDecision: decision)
         }
         store.items = [
-            pr("acme/web-app", 4821, "feat: tela de resumo do pedido com novo fluxo de pagamento e cupom", "marina-duarte", 1500),
-            pr("acme/design-system", 312, "fix: foco do botão no modo escuro", "rafael-lima", 9000, draft: true),
+            pr("acme/web-app", 4821, "feat: tela de resumo do pedido com novo fluxo de pagamento e cupom", "marina-duarte", 1500, checks: .passing),
+            pr("acme/design-system", 312, "fix: foco do botão no modo escuro", "rafael-lima", 9000, draft: true, checks: .failing(1)),
             pr("acme/infra", 58, "chore: sobe a versão do node", "ana-souza", 200_000),
+        ]
+        store.mine = [
+            pr("acme/web-app", 4815, "feat: filtro por período", "voce", 3000, checks: .passing, approvals: 2, decision: "APPROVED"),
+            pr("acme/web-app", 4790, "refactor: hooks do carrinho", "voce", 90_000, checks: .pending, approvals: 0, decision: "REVIEW_REQUIRED"),
         ]
         store.loaded = true
         store.updatedAt = Date().addingTimeInterval(-60)

@@ -16,6 +16,16 @@ for arg in "$@"; do
   esac
 done
 
+# A permissão de notificações e o item de login ficam presos à assinatura; o NeyHub (plugin) e as atualizações
+# conferem este certificado fixo (scripts/setup-signing.sh, o mesmo do Aero). Sem ele não há fallback ad-hoc.
+IDENTITY="Aero Local Signing"
+# here-string, não pipe: com pipefail o grep -q saindo cedo pode dar SIGPIPE no security.
+IDENTS=$(security find-identity -p codesigning)
+if ! grep -q "$IDENTITY" <<<"$IDENTS"; then
+  echo "✗ sem a identidade \"$IDENTITY\": rode scripts/setup-signing.sh" >&2
+  exit 1
+fi
+
 ARCHS=()
 (( DIST )) && ARCHS=(--arch arm64 --arch x86_64)
 swift build -c "$CONFIG" "${ARCHS[@]}"
@@ -28,15 +38,6 @@ cp "$BIN" "$APP/Contents/MacOS/Pauta"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 [[ -f Resources/AppIcon.icns ]] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
-# A permissão de notificações e o item de login ficam presos à assinatura. Com assinatura ad-hoc a identidade muda a
-# cada build e o macOS para de confiar no app; por isso assinamos com um certificado local
-# fixo (scripts/setup-signing.sh, o mesmo do Aero).
-IDENTITY="Aero Local Signing"
-# find-identity (e não find-certificate) confere que a chave privada também está no chaveiro.
-if ! security find-identity -p codesigning | grep -qF "\"$IDENTITY\""; then
-  echo "⚠ sem certificado local: rode scripts/setup-signing.sh, senão a permissão some a cada build"
-  IDENTITY="-"
-fi
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
 echo "✓ $APP"
 

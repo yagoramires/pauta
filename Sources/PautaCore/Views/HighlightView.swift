@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// O destaque do topo, sem caixa: a coisa mais recente que espera por você, em letra grande, com as ações embaixo.
@@ -36,7 +37,7 @@ struct HighlightView: View {
                         Text(subtitle).font(.system(size: 12))
                     }
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Grafite.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 8)
             }
@@ -51,12 +52,12 @@ struct HighlightView: View {
                 ServiceLogo(service: service)
                 Text(context).lineLimit(1)
             }
-            .font(.system(size: 11.5)).foregroundStyle(.secondary)
+            .font(.system(size: 11.5)).foregroundStyle(Grafite.muted)
             .padding(.bottom, 6)
             Text(text).font(.system(size: bigSize, weight: .semibold)).tracking(-0.25).lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
             if let detail {
-                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary).padding(.top, 4)
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(Grafite.muted).padding(.top, 4)
             }
             HStack(spacing: 8) { actions() }.padding(.top, 12)
         }

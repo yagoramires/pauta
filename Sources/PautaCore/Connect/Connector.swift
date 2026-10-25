@@ -76,6 +76,9 @@ final class Connector: ObservableObject {
 
     func cancelAll() { for service in [Service.slack, .jira] { cancel(service) } }
 
+    /// Alguma vigia da área de transferência ligada (o selftest confere que o `stop()` desliga).
+    var catching: Bool { !catchers.isEmpty }
+
     /// Desconectar: apaga só o token (o e-mail e o site do Jira ficam para a próxima vez).
     func disconnect(_ service: Service) {
         cancel(service)

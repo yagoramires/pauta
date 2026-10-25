@@ -112,7 +112,7 @@ final class SlackStore: ObservableObject {
     /// Sem credenciais o popover mostra os ajustes.
     @Published var configured: Bool
 
-    nonisolated static let defaultStateURL = AppPaths.support.appendingPathComponent("slack-state.json")
+    nonisolated static let defaultStateURL = AppPaths.real.slackState
 
     var unreadCount: Int { items.count }
     var seenIds: Set<String> { state.seen.ids }
@@ -127,6 +127,9 @@ final class SlackStore: ObservableObject {
     /// Muda ao reconfigurar: uma busca iniciada antes disso é descartada.
     private var epoch = 0
     private var inflight: Task<Void, Never>?
+    /// Abrir link e achar o app do Slack; o selftest troca os dois (nunca abre nada de verdade).
+    var open: (URL) -> Void = { NSWorkspace.shared.open($0) }
+    var slackApp: () -> URL? = { NSWorkspace.shared.urlForApplication(withBundleIdentifier: Notifier.slackBundleId) }
 
     init(client: SlackClient?, stateURL: URL = SlackStore.defaultStateURL, notify: @escaping ([SlackItem]) -> Void) {
         self.client = client
@@ -196,18 +199,16 @@ final class SlackStore: ObservableObject {
     /// Só marca como visto quando há o que abrir: senão o item sumiria sem o usuário ter visto a mensagem.
     func openLink(channel: String?, ts: String?, permalink: URL?) {
         guard let channel, let ts else { return openSlack() }
-        let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Notifier.slackBundleId) != nil
-        guard let url = slackOpenURL(permalink: permalink, team: state.teamId, channel: channel, ts: ts, appInstalled: installed)
+        guard let url = slackOpenURL(permalink: permalink, team: state.teamId, channel: channel, ts: ts, appInstalled: slackApp() != nil)
         else { return }
         let id = "\(channel):\(ts)"
         if let item = items.first(where: { $0.id == id }) { dismiss(item) } else { markSeen([id]) }
-        NSWorkspace.shared.open(url)
+        open(url)
     }
 
+    /// Abrir o .app pelo `open` é o mesmo que `openApplication`.
     func openSlack() {
-        if let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Notifier.slackBundleId) {
-            NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
-        }
+        if let app = slackApp() { open(app) }
     }
 
     func dismiss(_ item: SlackItem) {

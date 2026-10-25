@@ -4,6 +4,8 @@ import AppKit
 @MainActor
 final class GitHubStore: ObservableObject {
     @Published var items: [PullRequest] = []
+    /// "Seus PRs" (só na tela): os abertos do próprio usuário. Falhar aqui não derruba as revisões.
+    @Published var mine: [PullRequest] = []
     @Published var error: APIError?
     /// Aviso leve (limite da API); a lista antiga continua valendo.
     @Published var notice: String?
@@ -19,12 +21,16 @@ final class GitHubStore: ObservableObject {
     private var token: String?
     private let readToken: () async -> String?
     private let search: (String) async throws -> [PullRequest]
+    /// nil = sem checks nem "Seus PRs" (os testes antigos não chamam a GraphQL).
+    private let details: ((String) async throws -> PullDetails)?
     private var inflight: Task<Void, Never>?
 
     init(readToken: @escaping () async -> String? = GitHubToken.read,
-         search: @escaping (String) async throws -> [PullRequest] = { try await GitHubClient().reviewRequests(token: $0) }) {
+         search: @escaping (String) async throws -> [PullRequest] = { try await GitHubClient().reviewRequests(token: $0) },
+         details: ((String) async throws -> PullDetails)? = nil) {
         self.readToken = readToken
         self.search = search
+        self.details = details
     }
 
     /// Uma busca por vez: quem chama no meio dela só espera por ela.
@@ -39,12 +45,21 @@ final class GitHubStore: ObservableObject {
         do {
             if token == nil { token = await readToken() }
             guard let first = token else { return needsLogin(true) }
-            let found: [PullRequest]
+            var found: [PullRequest]
             do { found = try await search(first) } catch APIError.unauthorized {
                 // Token velho (o usuário pode ter refeito o login): relê do gh e tenta uma vez mais.
                 token = await readToken()
                 guard let again = token else { return needsLogin(true) }
                 found = try await search(again)
+            }
+            if let details, let token {
+                do {
+                    let more = try await details(token)
+                    found = found.map { pr in var pr = pr; pr.checks = more.checks[pr.id]; return pr }
+                    mine = more.mine
+                } catch {
+                    debugLog("github: checks e seus PRs: \(error)")
+                }
             }
             items = found
             needsLogin = false; error = nil; notice = nil; updatedAt = Date(); loaded = true
@@ -56,7 +71,7 @@ final class GitHubStore: ObservableObject {
     private func needsLogin(_ value: Bool) {
         needsLogin = value
         // updatedAt também aqui: senão cada abertura do popover dispara o gh de novo.
-        items = []; error = nil; notice = nil; loaded = true; updatedAt = Date()
+        items = []; mine = []; error = nil; notice = nil; loaded = true; updatedAt = Date()
     }
 
     func open(_ pr: PullRequest) { NSWorkspace.shared.open(pr.url) }

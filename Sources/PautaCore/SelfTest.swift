@@ -1,8 +1,12 @@
 import AppKit
+import NeyKit
+import UserNotifications
 
 /// Testes sem XCTest (só CommandLineTools): `Pauta --selftest` roda tudo e imprime "selftest ok".
 enum SelfTest {
     static func run() {
+        // Antes de tudo: nada no selftest chega ao credentials.json de verdade, nem se um teste esquecer de trocar o caminho.
+        Credentials.url = FileManager.default.temporaryDirectory.appendingPathComponent("pauta-test-\(UUID().uuidString)/credentials.json")
         apiErrorMapping()
         credentialsRoundTrip()
         jqlStrings()
@@ -37,6 +41,16 @@ enum SelfTest {
         MainActor.assumeIsolated { prefsRules() }
         filterRules()
         MainActor.assumeIsolated { jiraStoreRules() }
+        // 0.2.0: NeyHub (miolo compartilhado, notificações com prefixo, mapa de avisos, stop) e "Seus PRs".
+        pullDetailsDecoding()
+        MainActor.assumeIsolated {
+            githubDetailsFlow()
+            notifierRules()
+            hostedApp()
+            noticeTapAfterRestart()
+            appStop()
+        }
+        popoverGating()
     }
 
     /// Falha ao carregar transições não vira erro do Jira inteiro (faixa e triângulo); a busca da sprint pede 1 card só.
@@ -337,13 +351,17 @@ enum SelfTest {
         watch.cancel()
         precondition(seen.count == 1 && seen[0] == (true, false))
         // Poller: setInterval antes do start só guarda; depois do start troca o timer.
-        let poller = Poller(jira: JiraStore(client: nil), slack: SlackStore(client: nil, notify: { _ in }), github: GitHubStore())
+        // Stores falsos: nada lê o slack-state.json de verdade nem chama o gh.
+        let poller = Poller(jira: JiraStore(client: nil), slack: SlackStore(client: nil, stateURL: tempState(), notify: { _ in }),
+                            github: GitHubStore(readToken: { nil }, search: { _ in [] }))
         poller.setInterval(minutes: 1)
         precondition(poller.timerInterval == nil)
         poller.start()
         precondition(poller.timerInterval == 60)
         poller.setInterval(minutes: 5)
         precondition(poller.timerInterval == 300)
+        poller.stop()
+        precondition(poller.timerInterval == nil)
     }
 
     private static func highlightRules() {
@@ -837,5 +855,249 @@ enum SelfTest {
         precondition(barDescription(slack: 0, jira: 0, github: 0, failed: false) == "Pauta: nada pendente")
         precondition(barDescription(slack: 2, jira: 0, github: 0, failed: true) == "Pauta: erro em algum serviço · Slack 2")
         precondition(barImage(BarState(symbol: base, total: 3), description: "x").accessibilityDescription == "x")
+    }
+
+    // MARK: 0.2.0 · NeyHub e "Seus PRs"
+
+    /// Resposta GraphQL de exemplo (nomes fictícios): revisões com checks e os PRs abertos do usuário.
+    private static let detailsJSON = """
+    {"data": {
+      "review": {"nodes": [
+        {"number": 482, "repository": {"nameWithOwner": "acme/app-web"},
+         "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS", "contexts": {"nodes": [{"conclusion": "SUCCESS"}]}}}}]}},
+        {"number": 479, "repository": {"nameWithOwner": "acme/app-web"},
+         "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE", "contexts": {"nodes": [
+           {"conclusion": "FAILURE"}, {"conclusion": "SUCCESS"}, {"state": "ERROR"}, {"conclusion": null}]}}}}]}},
+        {"number": 77, "repository": {"nameWithOwner": "acme/infra"}, "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}},
+        {}
+      ]},
+      "mine": {"nodes": [
+        {"number": 475, "title": "feat: filtro por período", "url": "https://github.com/acme/app-web/pull/475", "isDraft": false,
+         "updatedAt": "2026-10-24T12:30:00Z", "repository": {"nameWithOwner": "acme/app-web"}, "author": {"login": "carla"},
+         "reviewDecision": "APPROVED", "latestReviews": {"nodes": [{"state": "APPROVED"}, {"state": "APPROVED"}, {"state": "COMMENTED"}]},
+         "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS", "contexts": {"nodes": []}}}}]}},
+        {"number": 470, "title": "fix: cupom", "url": "https://github.com/acme/app-web/pull/470", "isDraft": true,
+         "updatedAt": "2026-10-23T09:00:00Z", "repository": {"nameWithOwner": "acme/app-web"}, "author": {"login": "carla"},
+         "reviewDecision": "CHANGES_REQUESTED", "latestReviews": {"nodes": [{"state": "CHANGES_REQUESTED"}]},
+         "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING", "contexts": {"nodes": [{"conclusion": null}]}}}}]}},
+        {"number": 3}
+      ]}
+    }}
+    """
+
+    private static func pullDetailsDecoding() {
+        let details = try! decodePullDetails(Data(detailsJSON.utf8))
+        // Sem checks (rollup nulo) e o nó que não é PR ficam de fora do mapa.
+        precondition(details.checks == ["acme/app-web#482": .passing, "acme/app-web#479": .failing(2)], "\(details.checks)")
+        precondition(details.mine.count == 2 && details.mine.map(\.id) == ["acme/app-web#475", "acme/app-web#470"])
+        let ready = details.mine[0], blocked = details.mine[1]
+        precondition(ready.approvals == 2 && ready.checks == .passing && ready.reviewDecision == "APPROVED" && !ready.draft)
+        precondition(ready.author == "carla" && ready.updatedAt == Date(timeIntervalSince1970: 1_792_845_000))
+        precondition(blocked.draft && blocked.approvals == 0 && blocked.checks == .pending)
+        // Erro da GraphQL vem com 200 e "errors"; JSON estranho não passa.
+        do { _ = try decodePullDetails(Data(#"{"errors": [{"message": "Bad credentials"}]}"#.utf8)); preconditionFailure() } catch {
+            precondition(error as? APIError == .server("Bad credentials"))
+        }
+        for bad in ["{}", "[]", "oi", #"{"data": {"review": {}}}"#] {
+            precondition((try? decodePullDetails(Data(bad.utf8))) == nil, "recusar: \(bad)")
+        }
+        precondition(pullDetailsQuery.contains("author:@me") && pullDetailsQuery.contains("review-requested:@me"))
+        // Textos da tela.
+        precondition(prStatusText(ready) == ("✓ pronto pra merge", true))
+        precondition(prStatusText(blocked) == ("✕ pediram mudanças", false))
+        var failing = ready; failing.checks = .failing(1)
+        precondition(prStatusText(failing) == ("✕ 1 falhou", false))
+        var waiting = ready; waiting.reviewDecision = "REVIEW_REQUIRED"
+        precondition(prStatusText(waiting) == ("esperando revisão", nil))
+        var running = waiting; running.checks = .pending
+        precondition(prStatusText(running) == ("checks rodando", nil))
+        var bare = ready; bare.reviewDecision = nil; bare.checks = nil
+        precondition(prStatusText(bare) == ("aberto", nil))
+        precondition(checksText(nil) == nil && checksText(.failing(3))! == ("✕ 3 falharam", false) && checksText(.passing)! == ("✓ checks", true))
+        precondition(approvalsText(0) == "sem aprovação" && approvalsText(1) == "1 aprovação" && approvalsText(2) == "2 aprovações")
+        precondition(prPlace(ready) == "app-web #475")
+    }
+
+    /// Os checks entram nas revisões e "Seus PRs" no store; a GraphQL falhar não derruba as revisões.
+    @MainActor private static func githubDetailsFlow() {
+        let found = try! decodePullDetails(Data(detailsJSON.utf8))
+        func review(_ number: Int) -> PullRequest {
+            PullRequest(repo: "acme/app-web", number: number, title: "t", author: "bruno", updatedAt: Date(timeIntervalSince1970: 0),
+                        url: URL(string: "https://github.com/acme/app-web/pull/\(number)")!, draft: false)
+        }
+        var fail = false
+        let store = GitHubStore(readToken: { "x" }, search: { _ in [review(482), review(479), review(1)] },
+                                details: { _ in if fail { throw APIError.server("boom") }; return found })
+        block { await store.refresh() }
+        precondition(store.items.map(\.checks) == [.passing, .failing(2), nil] && store.mine == found.mine && store.error == nil)
+        fail = true
+        block { await store.refresh() }
+        precondition(store.items.count == 3 && store.items[0].checks == nil && store.mine == found.mine && store.error == nil)
+        // Sem gh: nem revisões nem seus PRs.
+        let none = GitHubStore(readToken: { nil }, search: { _ in [] }, details: { _ in found })
+        block { await none.refresh() }
+        precondition(none.needsLogin && none.mine.isEmpty)
+    }
+
+    /// Centro de notificações falso: conta o delegate e os pedidos de permissão e guarda o que seria postado.
+    private final class FakeCenter: NotifyCenter {
+        var delegates = 0, asks = 0
+        var posted: [UNNotificationRequest] = []
+        func setDelegate(_ delegate: UNUserNotificationCenterDelegate) { delegates += 1 }
+        func requestAuthorization(_ done: @escaping (Bool, Error?) -> Void) { asks += 1; done(true, nil) }
+        func post(_ request: UNNotificationRequest) { posted.append(request) }
+    }
+
+    /// Pasta e padrões temporários: o selftest nunca lê nem grava o `Application Support/Pauta` nem os padrões de verdade.
+    private static let hubRoot = FileManager.default.temporaryDirectory.appendingPathComponent("pauta-hub-\(UUID().uuidString)")
+    private static let hubSuite = "pauta-selftest-hub"
+
+    @MainActor private static func makeApp(hosted: Bool, center: FakeCenter, defaults: UserDefaults? = nil) -> PautaApp {
+        let app = PautaApp(defaults: defaults ?? UserDefaults(suiteName: hubSuite)!, hosted: hosted, version: "9.9.9",
+                           paths: AppPaths(root: hubRoot), center: center, github: GitHubStore(readToken: { nil }, search: { _ in [] }))
+        precondition(app.paths.support.path.hasPrefix(hubRoot.path) && Credentials.url.path.hasPrefix(hubRoot.path)
+                     && app.paths.notices.lastPathComponent == "avisos.json")
+        return app
+    }
+
+    private static func slackMessage(_ n: Int, link: Bool = true) -> SlackItem {
+        SlackItem(channel: "C\(n)", ts: SlackTS("\(1000 + n).000100"), threadTs: nil, userId: "U2", userName: "Ana", text: "oi \(n)",
+                  isDM: false, channelName: "geral", permalink: link ? URL(string: "https://acme.slack.com/archives/C\(n)/p\(n)") : nil)
+    }
+
+    @MainActor private static func notifierRules() {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pauta-ntf-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = AppPaths(root: root).notices
+        // Avulso: é o delegate e pede a permissão na primeira vez que há algo para avisar.
+        let center = FakeCenter()
+        let solo = Notifier(hosted: false, center: center, linksURL: url)
+        solo.start()
+        precondition(center.delegates == 1 && center.asks == 0)
+        solo.post((1...7).map { slackMessage($0) })
+        precondition(center.asks == 1 && center.posted.count == 6)
+        precondition(center.posted.allSatisfy { $0.identifier.hasPrefix("local.pauta.") })
+        precondition(center.posted[0].identifier == "local.pauta.C1:1001.000100" && center.posted[5].identifier.hasPrefix("local.pauta.resumo-"))
+        // O mapa guarda os individuais (não o resumo), em arquivo 0600.
+        precondition(NoticeLinks.load(url).link(for: "local.pauta.C1:1001.000100") == "https://acme.slack.com/archives/C1/p1")
+        precondition(NoticeLinks.load(url).entries.count == 5)
+        let mode = (try! FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as! NSNumber).intValue
+        precondition(mode == 0o600)
+        // Aviso da 0.1.0 (sem prefixo) ganha o prefixo; o já prefixado fica igual.
+        precondition(Notifier.normalized("C1:1.1") == "local.pauta.C1:1.1" && Notifier.normalized("local.pauta.x") == "local.pauta.x")
+        // Teto de 200: os mais antigos saem primeiro; repetir um id o leva para o fim.
+        var links = NoticeLinks()
+        for n in 0..<205 { links.add("id\(n)", link: URL(string: "https://x/\(n)")) }
+        precondition(links.entries.count == 200 && links.entries.first?.id == "id5" && links.entries.last?.id == "id204")
+        links.add("id5", link: nil)
+        precondition(links.entries.count == 200 && links.entries.last == NoticeLinks.Entry(id: "id5", link: "") && links.link(for: "id4") == nil)
+        links.save(url)
+        precondition(NoticeLinks.load(url) == links)
+        // Parado (desinstalado no NeyHub): não posta mais nada.
+        solo.stop()
+        solo.post([slackMessage(9)])
+        precondition(center.posted.count == 6)
+    }
+
+    /// Hospedado: nunca define o delegate, nunca pede permissão, não tem categorias e ignora o que não é do Pauta.
+    @MainActor private static func hostedApp() {
+        let saved = Credentials.url
+        defer { Credentials.url = saved }
+        let defaults = UserDefaults(suiteName: hubSuite)!
+        defaults.removePersistentDomain(forName: hubSuite)
+        defer { defaults.removePersistentDomain(forName: hubSuite) }
+        let center = FakeCenter()
+        let app = makeApp(hosted: true, center: center)
+        app.start()
+        precondition(center.delegates == 0 && center.asks == 0 && app.notificationCategories().isEmpty)
+        app.notifier.post([slackMessage(1)])
+        precondition(center.asks == 0 && center.posted.map(\.identifier) == ["local.pauta.C1:1001.000100"])
+        // Login é do NeyHub: o hospedado não grava `loginItemOffered`.
+        precondition(defaults.object(forKey: "loginItemOffered") == nil)
+        var opened: [URL] = []
+        app.open = { opened.append($0) }
+        app.slackStore.slackApp = { URL(fileURLWithPath: "/Applications/Slack.app") }
+        for foreign in ["C1:1001.000100", "local.dose.C1:1001.000100", "local.pautax.C1", ""] {
+            app.handleNotification(identifier: foreign, actionIdentifier: UNNotificationDefaultActionIdentifier)
+        }
+        app.handleNotification(identifier: "local.pauta.C1:1001.000100", actionIdentifier: UNNotificationDismissActionIdentifier)
+        precondition(opened.isEmpty, "\(opened)")
+        app.stop()
+    }
+
+    /// Review Focus 4: o toque chega depois de reiniciar (outro PautaApp, mesmo disco) e abre o link certo; sem o id, o Slack.
+    /// Com a tela ligada no NeyHub, mostra a tela do Pauta antes; só barra de menus, só abre o link.
+    @MainActor private static func noticeTapAfterRestart() {
+        let saved = Credentials.url
+        defer { Credentials.url = saved; try? FileManager.default.removeItem(at: hubRoot) }
+        let defaults = UserDefaults(suiteName: hubSuite)!
+        defaults.removePersistentDomain(forName: hubSuite)
+        defer { defaults.removePersistentDomain(forName: hubSuite) }
+        let first = makeApp(hosted: true, center: FakeCenter())
+        first.notifier.post([slackMessage(1), slackMessage(2, link: false)])
+        first.stop()
+
+        let center = FakeCenter()
+        let app = makeApp(hosted: true, center: center)
+        var opened: [URL] = [], shown = 0
+        app.open = { opened.append($0) }
+        app.onShowScreen = { shown += 1 }
+        app.slackStore.slackApp = { nil }
+        let id1 = "local.pauta.C1:1001.000100"
+        Presence(screen: false, menuBar: true).save(defaults)
+        app.handleNotification(identifier: id1, actionIdentifier: UNNotificationDefaultActionIdentifier)
+        precondition(opened == [URL(string: "https://acme.slack.com/archives/C1/p1")!] && shown == 0, "\(opened)")
+        // Sem permalink (DM do history): ainda abre a conversa pelo canal do id.
+        opened = []
+        app.handleNotification(identifier: "local.pauta.C2:1002.000100", actionIdentifier: UNNotificationDefaultActionIdentifier)
+        precondition(opened == [URL(string: "https://app.slack.com/client")!], "\(opened)")
+        // Com o app do Slack: o deep link com canal e ts. Tela ligada: a tela do Pauta primeiro, o link também.
+        opened = []
+        Presence(screen: true, menuBar: true).save(defaults)
+        let slackApp = URL(fileURLWithPath: "/Applications/Slack.app")
+        app.slackStore.slackApp = { slackApp }
+        app.handleNotification(identifier: id1, actionIdentifier: UNNotificationDefaultActionIdentifier)
+        precondition(shown == 1 && opened.count == 1 && opened[0].scheme == "slack"
+                     && opened[0].absoluteString.contains("id=C1") && opened[0].absoluteString.contains("message=1001.000100"), "\(opened)")
+        // Fora do mapa (resumo, ou passou dos 200): abre o Slack.
+        opened = []
+        app.handleNotification(identifier: "local.pauta.resumo-1", actionIdentifier: UNNotificationDefaultActionIdentifier)
+        precondition(opened == [slackApp] && shown == 2)
+        // Avulso nunca chama a tela do NeyHub.
+        let solo = makeApp(hosted: false, center: FakeCenter())
+        var soloShown = 0
+        solo.onShowScreen = { soloShown += 1 }
+        solo.open = { _ in }
+        solo.handleNotification(identifier: id1, actionIdentifier: UNNotificationDefaultActionIdentifier)
+        precondition(soloShown == 0)
+        app.stop()
+    }
+
+    /// `stop()` para o relógio, o acordar, a vigia da área de transferência e os avisos.
+    @MainActor private static func appStop() {
+        let saved = Credentials.url
+        defer { Credentials.url = saved; try? FileManager.default.removeItem(at: hubRoot) }
+        let defaults = UserDefaults(suiteName: hubSuite)!
+        defaults.removePersistentDomain(forName: hubSuite)
+        defer { defaults.removePersistentDomain(forName: hubSuite) }
+        let center = FakeCenter()
+        let app = makeApp(hosted: true, center: center)
+        var opened: [URL] = []
+        app.open = { opened.append($0) }
+        app.start()
+        app.connector.connectSlack()
+        precondition(app.connector.catching && app.connector.slack.waiting && opened.count == 1 && app.poller.timerInterval != nil)
+        app.stop()
+        precondition(!app.connector.catching && !app.connector.slack.waiting && app.poller.timerInterval == nil)
+        app.notifier.post([slackMessage(3)])
+        precondition(center.posted.isEmpty)
+    }
+
+    private static func popoverGating() {
+        let hosted = PopoverState(version: "1", hosted: true, updateReady: true)
+        precondition(!hosted.showsQuit && !hosted.showsPresence && !hosted.showsUpdate)
+        let solo = PopoverState(version: "1", hosted: false)
+        precondition(solo.showsQuit && solo.showsPresence && !solo.showsUpdate)
+        precondition(PopoverState(version: "1", hosted: false, updateReady: true).showsUpdate)
     }
 }

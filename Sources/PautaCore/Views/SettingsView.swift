@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// Board a gravar: um só vale sem perguntar; com vários mantém o já escolhido se ainda existir; senão nenhum
@@ -14,6 +15,7 @@ struct SettingsView: View {
     @ObservedObject var jira: JiraStore
     @ObservedObject var connector: Connector
     @ObservedObject var prefs: PrefsStore
+    @ObservedObject var shell: Shell
     var onSave: (Credentials) -> Void
     /// O que estava no disco ao abrir; serve de referência para saber o que o usuário mudou.
     @ViewState private var base: Credentials
@@ -23,9 +25,9 @@ struct SettingsView: View {
     @ViewState private var boardsLoading = false
     @ViewState private var boardsError: String?
 
-    init(slack: SlackStore, jira: JiraStore, connector: Connector, prefs: PrefsStore, advancedOpen: Bool = false,
+    init(slack: SlackStore, jira: JiraStore, connector: Connector, prefs: PrefsStore, shell: Shell, advancedOpen: Bool = false,
          onSave: @escaping (Credentials) -> Void) {
-        self.slack = slack; self.jira = jira; self.connector = connector; self.prefs = prefs; self.onSave = onSave
+        self.slack = slack; self.jira = jira; self.connector = connector; self.prefs = prefs; self.shell = shell; self.onSave = onSave
         _advanced = ViewState(wrappedValue: advancedOpen)
         let saved = Credentials.load()
         _base = ViewState(wrappedValue: saved)
@@ -39,11 +41,13 @@ struct SettingsView: View {
             connection("Jira", .jira, connected: jira.configured)
             VStack(alignment: .leading, spacing: 4) {
                 ServiceTitle(.github)
-                Text("Usa o gh já logado no terminal (gh auth login).").font(.caption).foregroundStyle(.secondary)
+                Text("Usa o gh já logado no terminal (gh auth login).").font(.caption).foregroundStyle(Grafite.muted)
             }
             display
             DisclosureGroup("Avançado (colar token manualmente)", isExpanded: $advanced) { manual.padding(.top, 8) }
                 .font(.callout)
+            if shell.state.showsPresence, let presence = shell.presence { modes(presence) }
+            app
         }
         .padding(16)
         .task { if draft.jiraReady { await loadBoards() } }
@@ -76,6 +80,39 @@ struct SettingsView: View {
         }
     }
 
+    /// Avulso: onde o Pauta aparece. Desligar os dois não vale: o outro volta a ligar (`normalized`).
+    private func modes(_ presence: Presence) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("Onde aparece")
+            ForEach([("Janela", \Presence.screen), ("Barra de menus", \Presence.menuBar)], id: \.0) { label, key in
+                switchRow(label, Binding(get: { presence[keyPath: key] }, set: {
+                    var next = presence
+                    next[keyPath: key] = $0
+                    shell.onPresence(next.normalized(hasScreen: true))
+                }))
+            }
+        }
+    }
+
+    /// Versão e, no avulso, a atualização pronta e o Sair (hospedado os dois são do NeyHub).
+    private var app: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if shell.state.showsUpdate {
+                HStack(spacing: 8) {
+                    Text("Atualização pronta — entra ao sair").font(.caption)
+                    GPill(title: "Reiniciar agora") { shell.relaunch() }.accessibilityLabel("Reiniciar o Pauta agora")
+                }
+            }
+            HStack(spacing: 8) {
+                Text("Pauta \(shell.state.version)").font(.caption).foregroundStyle(Grafite.muted)
+                Spacer(minLength: 0)
+                if shell.state.showsQuit {
+                    Button("Sair do Pauta") { NSApp.terminate(nil) }.buttonStyle(GraphiteButtonStyle(primary: false))
+                }
+            }
+        }
+    }
+
     private func prefRow<Control: View>(_ label: String, @ViewBuilder _ control: () -> Control) -> some View {
         HStack {
             Text(label).font(.system(size: 13))
@@ -86,7 +123,7 @@ struct SettingsView: View {
 
     private func switchRow(_ label: String, _ isOn: Binding<Bool>) -> some View {
         prefRow(label) {
-            Toggle("", isOn: isOn).toggleStyle(.switch).controlSize(.mini).tint(.primary).labelsHidden()
+            Toggle("", isOn: isOn).toggleStyle(.switch).controlSize(.mini).tint(Grafite.accent).labelsHidden()
         }
     }
 
@@ -96,7 +133,7 @@ struct SettingsView: View {
                 if connected {
                     HStack(spacing: 10) {
                         Label("Conectado", systemImage: "checkmark.circle.fill")
-                        Button("Desconectar") { connector.disconnect(service) }.buttonStyle(.link).foregroundStyle(.secondary)
+                        Button("Desconectar") { connector.disconnect(service) }.buttonStyle(.link).foregroundStyle(Grafite.muted)
                     }
                 }
             }
@@ -122,7 +159,7 @@ struct SettingsView: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Grafite.card))
     }
 
     /// Seletor de board quando o projeto tem mais de um; "Carregar boards" busca de novo.
@@ -139,11 +176,11 @@ struct SettingsView: View {
             HStack {
                 Button(boardsLoading ? "Carregando…" : "Carregar boards") { Task { await loadBoards() } }
                     .disabled(boardsLoading)
-                    .buttonStyle(.link).foregroundStyle(.secondary)
-                if boards.count == 1 { Text(boards[0].name).foregroundStyle(.secondary) }
+                    .buttonStyle(.link).foregroundStyle(Grafite.muted)
+                if boards.count == 1 { Text(boards[0].name).foregroundStyle(Grafite.muted) }
             }
             .font(.caption)
-            if let boardsError { Label(boardsError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary) }
+            if let boardsError { Label(boardsError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(Grafite.muted) }
         }
     }
 

@@ -1,11 +1,22 @@
 import Foundation
 
 /// Onde o app guarda seus dados. A pasta do nome antigo (Radar) é movida para a nova na primeira execução.
-enum AppPaths {
-    private static let applicationSupport = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support")
-    static let support = applicationSupport.appendingPathComponent("Pauta")
-    static let legacySupport = applicationSupport.appendingPathComponent("Radar")
+/// Injetável: o selftest usa uma raiz temporária e nunca toca na pasta de verdade.
+struct AppPaths {
+    let support: URL
+    let legacySupport: URL
+
+    init(root: URL) {
+        support = root.appendingPathComponent("Pauta")
+        legacySupport = root.appendingPathComponent("Radar")
+    }
+
+    static let real = AppPaths(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support"))
+
+    var credentials: URL { support.appendingPathComponent("credentials.json") }
+    var slackState: URL { support.appendingPathComponent("slack-state.json") }
+    /// Id da notificação → permalink, para o toque abrir a mensagem certa mesmo depois de reiniciar.
+    var notices: URL { support.appendingPathComponent("avisos.json") }
 }
 
 /// Move a pasta antiga para a nova (mover mantém as permissões 0700/0600). Devolve `true` só se moveu; não mexe em

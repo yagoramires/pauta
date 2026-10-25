@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// Seção "Seus cards": os cards do usuário na sprint e, recolhidos, os livres do projeto. Sem token, só o "Conectar Jira".
@@ -83,11 +84,11 @@ struct JiraView: View {
             Banner {
                 if store.error == .unauthorized && store.notice == nil {
                     Text("Token do Jira inválido.")
-                    Button("Ajustes", action: openSettings).buttonStyle(.link).foregroundStyle(.secondary)
+                    Button("Ajustes", action: openSettings).buttonStyle(.link).foregroundStyle(Grafite.muted)
                 } else {
                     // O corpo de um erro de servidor pode ser longo: a faixa mostra o começo (o log guarda tudo).
                     Text(String((store.notice ?? store.error?.userMessage ?? "").prefix(120)))
-                    if let key = store.errorKey { Button("Abrir \(key)") { store.open(key) }.buttonStyle(.link).foregroundStyle(.secondary) }
+                    if let key = store.errorKey { Button("Abrir \(key)") { store.open(key) }.buttonStyle(.link).foregroundStyle(Grafite.muted) }
                 }
             }
         }
@@ -117,7 +118,7 @@ struct JiraView: View {
     private var freeSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(freeCardsText(free.count) + (freeOpen ? " ▾" : " ▸")) { freeOpen.toggle() }
-                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+                .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Grafite.muted)
                 .padding(.top, 4)
             if freeOpen {
                 ForEach(groupFree(free)) { group in groupView(group) }
@@ -137,7 +138,7 @@ struct JiraView: View {
                     ForEach(group.subtasks) { sub in freeRow(sub) }
                 } label: {
                     Text(group.subtasks.count == 1 ? "1 sub-tarefa" : "\(group.subtasks.count) sub-tarefas")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .font(.system(size: 11)).foregroundStyle(Grafite.muted)
                 }
                 .padding(.leading, 26)
             }
@@ -168,7 +169,7 @@ struct JiraView: View {
 }
 
 /// Pílula de status com menu de transições. As opções carregam ao passar o mouse na linha (antes de abrir o menu).
-private struct StatusMenu: View {
+struct StatusMenu: View {
     @ObservedObject var store: JiraStore
     let issue: JiraIssue
     @ViewState private var options: [Transition]?
@@ -194,8 +195,8 @@ private struct StatusMenu: View {
             }
             .font(.caption)
             .padding(.horizontal, 8).padding(.vertical, 2)
-            .background(Color.primary.opacity(0.08), in: Capsule())
-            .foregroundStyle(.secondary)
+            .background(Grafite.selected, in: Capsule())
+            .foregroundStyle(Grafite.muted)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)

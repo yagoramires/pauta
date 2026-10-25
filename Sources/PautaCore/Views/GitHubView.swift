@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// Seção "Revisões": PRs que esperam a revisão do usuário, sem o que está no destaque. O token vem do `gh` do terminal
@@ -64,12 +65,12 @@ struct GitHubView: View {
             ForEach(shown) { pr in
                 CompactRow(service: .github, text: pr.title, query: query, badge: pr.draft ? "rascunho" : nil, dim: isOld(pr.updatedAt),
                            action: { store.open(pr) }) {
-                    Text(agoShort(pr.updatedAt)).font(.system(size: 11.5)).foregroundStyle(.secondary).fixedSize()
+                    Text(agoShort(pr.updatedAt)).font(.system(size: 11.5)).foregroundStyle(Grafite.muted).fixedSize()
                 }
             }
             if hidden > 0 {
                 Button(showAll ? "Ver menos" : "Ver mais \(hidden)") { showAll.toggle() }
-                    .buttonStyle(.link).foregroundStyle(.secondary).font(.callout).padding(.top, 4)
+                    .buttonStyle(.link).foregroundStyle(Grafite.muted).font(.callout).padding(.top, 4)
             }
         }
     }

@@ -9,10 +9,100 @@ struct PullRequest: Identifiable, Equatable {
     var updatedAt: Date
     var url: URL
     var draft: Bool
+    /// Só a GraphQL traz (a tela mostra): checks do último commit, aprovações e a decisão de revisão. nil = não veio.
+    var checks: Checks? = nil
+    var approvals: Int? = nil
+    var reviewDecision: String? = nil
 
     var id: String { "\(repo)#\(number)" }
     /// Sem o dono ("web-app#2499"): cabe numa linha; o dono quase sempre é o mesmo.
     var shortId: String { "\(repo.split(separator: "/").last.map(String.init) ?? repo)#\(number)" }
+}
+
+/// O resumo dos checks do último commit (`statusCheckRollup`).
+enum Checks: Equatable { case passing, failing(Int), pending }
+
+/// O que a search REST não traz: os checks dos PRs para revisar (por id "dono/repo#n") e os PRs abertos do próprio
+/// usuário (`author:@me`), com aprovações e checks.
+struct PullDetails: Equatable {
+    var checks: [String: Checks] = [:]
+    var mine: [PullRequest] = []
+}
+
+/// Uma consulta GraphQL só, com o mesmo token do `gh`. Os contextos (até 50) contam quantos checks falharam.
+let pullDetailsQuery = """
+fragment checks on PullRequest { commits(last: 1) { nodes { commit { statusCheckRollup { state \
+contexts(first: 50) { nodes { ... on CheckRun { conclusion } ... on StatusContext { state } } } } } } } }
+query {
+  review: search(query: "is:open is:pr review-requested:@me archived:false", type: ISSUE, first: 100) {
+    nodes { ... on PullRequest { number repository { nameWithOwner } ...checks } } }
+  mine: search(query: "is:open is:pr author:@me archived:false sort:updated-desc", type: ISSUE, first: 50) {
+    nodes { ... on PullRequest { number title url isDraft updatedAt repository { nameWithOwner } author { login } \
+reviewDecision latestReviews(first: 20) { nodes { state } } ...checks } } }
+}
+"""
+
+/// Resposta da `pullDetailsQuery` → checks e seus PRs. Pura, para testar sem rede. Nó que não é PR (vem `{}`) é pulado.
+func decodePullDetails(_ data: Data) throws -> PullDetails {
+    struct Response: Decodable {
+        struct Message: Decodable { var message: String }
+        struct Both: Decodable { var review: Search; var mine: Search }
+        struct Search: Decodable { var nodes: [Node?] }
+        struct Name: Decodable { var nameWithOwner: String }
+        struct Login: Decodable { var login: String }
+        struct State: Decodable { var state: String? }
+        struct States: Decodable { var nodes: [State?] }
+        struct Context: Decodable { var conclusion: String?; var state: String? }
+        struct Contexts: Decodable { var nodes: [Context?] }
+        struct Rollup: Decodable { var state: String; var contexts: Contexts? }
+        struct Commit: Decodable { var statusCheckRollup: Rollup? }
+        struct CommitNode: Decodable { var commit: Commit }
+        struct Commits: Decodable { var nodes: [CommitNode?] }
+        struct Node: Decodable {
+            var number: Int?
+            var title: String?
+            var url: String?
+            var isDraft: Bool?
+            var updatedAt: String?
+            var repository: Name?
+            var author: Login?
+            var reviewDecision: String?
+            var latestReviews: States?
+            var commits: Commits?
+        }
+        var data: Both?
+        var errors: [Message]?
+    }
+    func checks(_ node: Response.Node) -> Checks? {
+        guard let rollup = node.commits?.nodes.last??.commit.statusCheckRollup else { return nil }
+        let bad: Set<String> = ["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]
+        let failed = (rollup.contexts?.nodes ?? []).filter { bad.contains($0?.conclusion ?? $0?.state ?? "") }.count
+        if failed > 0 { return .failing(failed) }
+        switch rollup.state {
+        case "SUCCESS": return .passing
+        // Falhou fora dos 50 contextos lidos: pelo menos um.
+        case "FAILURE", "ERROR": return .failing(1)
+        default: return .pending
+        }
+    }
+    let response: Response
+    do { response = try JSONDecoder().decode(Response.self, from: data) } catch { throw APIError.server("resposta inesperada do GitHub") }
+    guard let both = response.data else { throw APIError.server(response.errors?.first?.message ?? "resposta inesperada do GitHub") }
+    let clock = ISO8601DateFormatter()
+    var result = PullDetails()
+    for node in both.review.nodes.compactMap({ $0 }) {
+        guard let number = node.number, let repo = node.repository?.nameWithOwner, let found = checks(node) else { continue }
+        result.checks["\(repo)#\(number)"] = found
+    }
+    result.mine = both.mine.nodes.compactMap { $0 }.compactMap { node in
+        guard let number = node.number, let repo = node.repository?.nameWithOwner, let url = node.url.flatMap(URL.init(string:)),
+              let date = node.updatedAt.flatMap(clock.date(from:)) else { return nil }
+        return PullRequest(repo: repo, number: number, title: node.title ?? "", author: node.author?.login ?? "?", updatedAt: date,
+                           url: url, draft: node.isDraft ?? false, checks: checks(node),
+                           approvals: (node.latestReviews?.nodes ?? []).filter { $0?.state == "APPROVED" }.count,
+                           reviewDecision: node.reviewDecision)
+    }
+    return result
 }
 
 /// Resposta da search API (`/search/issues`) → PRs. Pura, para testar sem rede.
@@ -135,6 +225,16 @@ struct GitHubClient {
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         return try decodePullRequestPage(try await HTTP.send(request, mapError: { status, headers, _ in githubError(status: status, headers: headers) }))
     }
+
+    /// Checks das revisões e seus PRs abertos (`pullDetailsQuery`).
+    func details(token: String) async throws -> PullDetails {
+        var request = URLRequest(url: URL(string: "https://api.github.com/graphql")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["query": pullDetailsQuery])
+        return try decodePullDetails(try await HTTP.send(request, mapError: { status, headers, _ in githubError(status: status, headers: headers) }))
+    }
 }
 
 /// `Pauta --dump github`: os PRs que o GitHub devolve. Nunca imprime o token.
@@ -145,6 +245,9 @@ enum GitHubDump {
             let prs = try await GitHubClient().reviewRequests(token: token)
             print("PRs para revisar: \(prs.count)")
             for pr in prs { print("  \(pr.id) \(pr.title)") }
+            let mine = try await GitHubClient().details(token: token).mine
+            print("Seus PRs abertos: \(mine.count)")
+            for pr in mine { print("  \(pr.id) \(pr.title) · \(prStatusText(pr).text)") }
             return 0
         } catch {
             print("erro: \((error as? APIError)?.userMessage ?? "\(error)")")

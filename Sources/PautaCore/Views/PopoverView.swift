@@ -1,3 +1,4 @@
+import NeyKit
 import SwiftUI
 
 /// O popover único: o destaque no topo e, embaixo, Slack, Revisões e Jira compactos numa rolagem com altura máxima,
@@ -12,6 +13,7 @@ struct PopoverView: View {
     @ObservedObject var github: GitHubStore
     @ObservedObject var connector: Connector
     @ObservedObject var prefs: PrefsStore
+    @ObservedObject var shell: Shell
     var onSave: (Credentials) -> Void
     var refresh: () -> Void
     var maxHeight: CGFloat
@@ -23,13 +25,13 @@ struct PopoverView: View {
     /// Estado inicial só para os snapshots (eles não clicam).
     private let preview: (slackShowAll: Bool, jiraFreeOpen: Bool, jiraExpanded: Set<String>, advancedOpen: Bool)
 
-    init(slack: SlackStore, jira: JiraStore, github: GitHubStore, connector: Connector, prefs: PrefsStore,
+    init(slack: SlackStore, jira: JiraStore, github: GitHubStore, connector: Connector, prefs: PrefsStore, shell: Shell,
          onSave: @escaping (Credentials) -> Void, refresh: @escaping () -> Void = {},
          showSettings: Bool = false, slackShowAll: Bool = false, jiraFreeOpen: Bool = false,
          jiraExpanded: Set<String> = [], advancedOpen: Bool = false, filter: ServiceFilter = .all, searchQuery: String = "",
          maxHeight: CGFloat = PopoverView.defaultMaxHeight) {
         self.maxHeight = maxHeight
-        self.slack = slack; self.jira = jira; self.github = github; self.connector = connector; self.prefs = prefs
+        self.slack = slack; self.jira = jira; self.github = github; self.connector = connector; self.prefs = prefs; self.shell = shell
         self.onSave = onSave; self.refresh = refresh
         preview = (slackShowAll, jiraFreeOpen, jiraExpanded, advancedOpen)
         _showSettings = ViewState(wrappedValue: showSettings)
@@ -42,8 +44,8 @@ struct PopoverView: View {
         Group {
             if showSettings {
                 VStack(alignment: .leading, spacing: 0) {
-                    Button("‹ Voltar") { showSettings = false }.buttonStyle(.link).foregroundStyle(.primary).padding([.top, .horizontal], 16)
-                    SettingsView(slack: slack, jira: jira, connector: connector, prefs: prefs, advancedOpen: preview.advancedOpen,
+                    Button("‹ Voltar") { showSettings = false }.buttonStyle(.link).foregroundStyle(Grafite.text).padding([.top, .horizontal], 16)
+                    SettingsView(slack: slack, jira: jira, connector: connector, prefs: prefs, shell: shell, advancedOpen: preview.advancedOpen,
                                  onSave: { onSave($0); showSettings = false })
                 }
             } else {
@@ -52,6 +54,10 @@ struct PopoverView: View {
         }
         .frame(width: 360)
         .environment(\.density, prefs.prefs.density)
+        .foregroundStyle(Grafite.text)
+        .background(Grafite.bg.ignoresSafeArea())
+        .tint(Grafite.accent)
+        .environment(\.colorScheme, .dark)
     }
 
     private var main: some View {

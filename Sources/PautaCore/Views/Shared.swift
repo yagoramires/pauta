@@ -1,6 +1,7 @@
+import NeyKit
 import SwiftUI
 
-/// Peças comuns às seções do popover, no estilo grafite: fonte do sistema e só `.primary`/`.secondary`. As únicas cores
+/// Peças comuns às seções do popover e da tela, no tema Grafite do NeyKit (sempre escuro). As únicas cores fora dele
 /// fixas da tela são os logos dos serviços.
 
 func agoText(_ date: Date?) -> String {
@@ -76,16 +77,17 @@ struct ServiceLogo: View {
     }
 }
 
-/// Botão grafite: primário com fundo `.primary` e texto invertido; secundário com `.primary` a 8%.
+/// Botão grafite: primário claro com tinta escura (o `.btn` do mockup); secundário no fundo de card com borda.
 struct GraphiteButtonStyle: ButtonStyle {
     var primary: Bool = true
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(primary ? Color(nsColor: .windowBackgroundColor) : Color.primary)
+            .foregroundStyle(primary ? Grafite.onAccent : Grafite.text)
             .padding(.vertical, 4).padding(.horizontal, 11)
-            .background(RoundedRectangle(cornerRadius: 6).fill(primary ? Color.primary : Color.primary.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 6).fill(primary ? Grafite.text : Grafite.card))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(primary ? .clear : Grafite.cardBorder, lineWidth: 1))
             .contentShape(Rectangle())
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
@@ -117,7 +119,8 @@ struct Banner<Content: View>: View {
         }
         .font(.caption)
         .padding(6)
-        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+        .background(Grafite.card, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Grafite.cardBorder, lineWidth: 1))
     }
 }
 
@@ -130,7 +133,7 @@ struct FooterBar: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text(results.map(resultsText) ?? agoText(updatedAt)).font(.caption).foregroundStyle(.secondary)
+            Text(results.map(resultsText) ?? agoText(updatedAt)).font(.caption).foregroundStyle(Grafite.muted)
             Spacer()
             iconButton("arrow.clockwise", help: "Atualizar", action: refresh)
             iconButton("gearshape", help: "Ajustes", action: settings)
@@ -139,7 +142,7 @@ struct FooterBar: View {
 
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(.secondary).frame(width: 24, height: 24).contentShape(Rectangle())
+            Image(systemName: symbol).font(.system(size: 13)).foregroundStyle(Grafite.muted).frame(width: 24, height: 24).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(help)
@@ -161,7 +164,7 @@ struct SectionTitle<Trailing: View>: View {
             Spacer(minLength: 8)
             trailing.font(.system(size: 11.5))
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Grafite.muted)
     }
 }
 
@@ -192,7 +195,7 @@ struct Note: View {
     init(_ text: String) { self.text = text }
 
     var body: some View {
-        Text(text).font(.system(size: 13)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        Text(text).font(.system(size: 13)).foregroundStyle(Grafite.muted).frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -227,7 +230,7 @@ struct CompactRow<Trailing: View>: View {
             }
         }
         .padding(.vertical, density == .compact ? 3 : 6).padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Color.primary.opacity(0.06) : .clear))
+        .background(RoundedRectangle(cornerRadius: 8).fill(hovering ? Grafite.selected : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .padding(.horizontal, -8)
@@ -239,11 +242,11 @@ struct CompactRow<Trailing: View>: View {
             ServiceLogo(service: service)
             if let name { Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1).layoutPriority(1) }
             Text(marked).font(.system(size: 13))
-                .foregroundStyle(name == nil ? .primary : .secondary).lineLimit(1).truncationMode(.tail)
+                .foregroundStyle(name == nil ? Grafite.text : Grafite.muted).lineLimit(1).truncationMode(.tail)
             if let badge {
-                Text(badge).font(.system(size: 10)).foregroundStyle(.secondary)
+                Text(badge).font(.system(size: 10)).foregroundStyle(Grafite.muted)
                     .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Color.primary.opacity(0.08), in: Capsule())
+                    .background(Grafite.selected, in: Capsule())
             }
             Spacer(minLength: 0)
         }
@@ -255,7 +258,7 @@ struct CompactRow<Trailing: View>: View {
         let ranges = matchRanges(line, query: query)
         var result = AttributedString(line)
         for range in ranges {
-            if let r = Range(range, in: result) { result[r].backgroundColor = Color.primary.opacity(0.1) }
+            if let r = Range(range, in: result) { result[r].backgroundColor = Grafite.accent.opacity(0.25) }
         }
         // Trecho achado longe do começo sumiria nas reticências: a linha passa a começar umas palavras antes dele.
         // Com nome na frente sobra menos largura para o texto.
@@ -278,9 +281,9 @@ struct InputBox: ViewModifier {
             .textFieldStyle(.plain)
             .focused($focused)
             .padding(.vertical, 7).padding(.horizontal, 10)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(Grafite.card))
             .overlay(RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(focused ? Color.primary.opacity(0.4) : Color.primary.opacity(0.12), lineWidth: focused ? 1.5 : 1))
+                .strokeBorder(focused ? Grafite.accent : Grafite.cardBorder, lineWidth: focused ? 1.5 : 1))
     }
 }
 
@@ -295,7 +298,7 @@ struct LabeledField<Input: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(label).font(.caption).foregroundStyle(Grafite.muted)
             input
         }
     }

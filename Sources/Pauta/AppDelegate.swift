@@ -1,121 +1,69 @@
 import AppKit
-import Combine
-import ServiceManagement
-import SwiftUI
+import NeyKitApp
+import PautaCore
 
+/// Casca do avulso: o Pauta em si mora no PautaCore, o mesmo que o NeyHub carrega como plugin.
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
-    private(set) var item: NSStatusItem!
-    private let popover = NSPopover()
-    private var credentials = Credentials.load()
-    /// Muda a cada abertura do popover para o SwiftUI recriar a raiz (filtro e busca zerados, ajustes relidos do disco).
-    private var generation = 0
-    /// Escuta cliques nos outros apps enquanto o popover está aberto.
-    private var outsideClicks: Any?
-    private let jiraStore = JiraStore(client: nil)
-    private let prefsStore = PrefsStore()
-    /// O SlackStore grava o registro de "já avisado" antes de chamar `notify`, então filtrar aqui não trava o registro.
-    private lazy var slackStore = SlackStore(client: nil, notify: { [prefsStore] in
-        Notifier.postIfSlackClosed(notifiable($0, prefs: prefsStore.prefs))
-    })
-    private let githubStore = GitHubStore()
-    private lazy var poller = Poller(jira: jiraStore, slack: slackStore, github: githubStore,
-                                     interval: TimeInterval(prefsStore.prefs.refreshMinutes * 60))
-    /// Os fluxos "Conectar" moram aqui (e não na tela): continuam com o popover fechado, enquanto o usuário copia o token no navegador.
-    private lazy var connector = Connector(save: { [weak self] in self?.save($0) })
-    private var subscriptions = Set<AnyCancellable>()
+final class PautaAppDelegate: NSObject, NSApplicationDelegate {
+    private var pauta: PautaApp?
+    private var updater: Updater?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.target = self
-        item.button?.action = #selector(toggle)
-        popover.behavior = .transient
-        popover.delegate = self
-        let host = NSHostingController(rootView: AnyView(EmptyView()))
-        // A janelinha acompanha o tamanho do conteúdo (listas que crescem, ajustes).
-        host.sizingOptions = .preferredContentSize
-        popover.contentViewController = host
-        // Ícone reativo: qualquer mudança nos três stores redesenha a barra.
-        Publishers.MergeMany(jiraStore.objectWillChange, slackStore.objectWillChange, githubStore.objectWillChange)
-            .debounce(for: .milliseconds(50), scheduler: RunLoop.main)
-            .sink { [weak self] in self?.updateBar() }
-            .store(in: &subscriptions)
-        // Sem refreshContent(): recriaria o popover e tiraria o usuário dos ajustes; o PopoverView observa o PrefsStore.
-        // Só o intervalo mexe no timer: trocar densidade ou filtros não pode reiniciar a contagem.
-        prefsStore.$prefs.map(\.refreshMinutes).removeDuplicates()
-            .sink { [weak self] in self?.poller.setInterval(minutes: $0) }
-            .store(in: &subscriptions)
-        // O @Published avisa no willSet: `prefsStore.prefs` ainda é o valor velho, então a barra usa o que chegou.
-        prefsStore.$prefs.removeDuplicates()
-            .sink { [weak self] in self?.updateBar(prefs: $0) }
-            .store(in: &subscriptions)
-        updateBar()
-        jiraStore.reconfigure(credentials)
-        slackStore.reconfigure(credentials)
-        Notifier.onOpen = { [weak self] channel, ts, link in MainActor.assumeIsolated { self?.slackStore.openLink(channel: channel, ts: ts, permalink: link) } }
-        Notifier.start()
-        poller.start()
-        // Para funcionar "sozinho": na primeira vez já entra nos itens de início.
-        if !UserDefaults.standard.bool(forKey: "loginItemOffered") {
-            UserDefaults.standard.set(true, forKey: "loginItemOffered")
-            do { try SMAppService.mainApp.register() } catch { debugLog("abrir ao iniciar falhou: \(error)") }
+        if HubCheck.isHosted(id: "local.pauta") && HubCheck.leaveForHub(id: "local.pauta", name: "Pauta") { return }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        let pauta = PautaApp(defaults: .standard, hosted: false, version: version)
+        pauta.start()
+        setupMenu()
+        pauta.applyPresence(pauta.presence)
+        self.pauta = pauta
+
+        let updater = Updater(name: "Pauta", repo: "yagoramires/pauta", id: "local.pauta")
+        pauta.updateReady = updater.staged != nil
+        updater.onChange = { [weak pauta, weak updater] in pauta?.updateReady = updater?.staged != nil }
+        pauta.onRelaunch = { [weak updater] in updater?.relaunchNow() }
+        updater.start()
+        self.updater = updater
+        // Toda abertura: mostra as novidades uma vez e limpa um preparado velho.
+        if let notes = Updater.notesAfterUpdate(id: "local.pauta", current: version) {
+            WhatsNew.show(name: "Pauta", version: version, notes: notes)
         }
-        debugLog("iniciou · jira \(credentials.jiraReady ? "configurado" : "sem credenciais") · slack \(credentials.slackReady ? "configurado" : "sem credenciais")")
     }
 
-    func applicationWillTerminate(_ notification: Notification) { connector.cancelAll() }
-
-    private func updateBar(prefs: Prefs? = nil) {
-        // Erro de qualquer serviço conectado vira o triângulo; "gh não logado" não é erro, a seção explica.
-        let failed = jiraStore.error != nil || slackStore.error != nil || githubStore.error != nil
-        let (slack, jira, github) = barCounts(slack: slackStore.items, mine: jiraStore.mine.count, freeCount: jiraStore.freeCount,
-                                              prs: githubStore.count, prefs: prefs ?? prefsStore.prefs)
-        let text = barDescription(slack: slack, jira: jira, github: github, failed: failed)
-        item.button?.image = barImage(barState(slack: slack, jira: jira, github: github, failed: failed), description: text)
-        item.button?.toolTip = text
+    /// Para a vigia da área de transferência (um "Conectar" em andamento), o relógio e os avisos antes de sair.
+    func applicationWillTerminate(_ notification: Notification) {
+        pauta?.stop()
+        _ = updater?.applyStaged()
     }
 
-    private func save(_ saved: Credentials) {
-        let new = saved.trimmed()
-        new.save()
-        credentials = new
-        jiraStore.reconfigure(new)
-        slackStore.reconfigure(new)
-        poller.refreshNow(reason: "ajustes salvos")
-        debugLog("credenciais salvas · jira \(new.jiraReady) · slack \(new.slackReady)")
-        // Sem refreshContent(): recriar a raiz tiraria o usuário dos ajustes e zeraria filtro e busca. Os stores e o
-        // Connector publicam a mudança, e os ajustes releem o disco quando o "conectado" muda.
+    /// Clique no Dock (modo Tela) ou aberto de novo pelo Finder: traz a janela de volta.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard let pauta, pauta.presence.screen else { return true }
+        pauta.showScreen()
+        return false
     }
 
-    private func refreshContent() {
-        generation += 1
-        (popover.contentViewController as? NSHostingController<AnyView>)?.rootView = AnyView(
-            PopoverView(slack: slackStore, jira: jiraStore, github: githubStore, connector: connector, prefs: prefsStore,
-                        onSave: { [weak self] in self?.save($0) },
-                        refresh: { [weak self] in self?.poller.refreshNow() })
-                .id(generation))
-    }
-
-    @objc private func toggle() {
-        if popover.isShown { return popover.performClose(nil) }
-        guard let button = item.button else { return }
-        refreshContent()
-        poller.popoverOpened()
-        // App de barra não é ativo: sem isso os campos de texto não recebem teclado.
-        NSApp.activate()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        // O .transient sozinho não fecha quando o clique cai em outro app; um monitor global pega esse clique.
-        // Fechar o popover NÃO cancela um "Conectar" em andamento: o usuário vai ao navegador copiar o token.
-        if outsideClicks == nil {
-            outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-                self?.popover.performClose(nil)
-            }
+    /// No modo Tela (com ícone no Dock) o menu do app é o caminho até as configurações sem o ícone da barra.
+    private func setupMenu() {
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Configurações…", action: #selector(showSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Sair do Pauta", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let item = NSMenuItem()
+        item.submenu = appMenu
+        // Editar: sem ele ⌘C/⌘V/⌘Z não chegam aos campos de texto (busca, e-mail e site do Jira, tokens).
+        let edit = NSMenu(title: "Editar")
+        for (title, action, key, mods) in [("Desfazer", "undo:", "z", NSEvent.ModifierFlags.command), ("Refazer", "redo:", "z", [.command, .shift]),
+                                           ("Recortar", "cut:", "x", .command), ("Copiar", "copy:", "c", .command),
+                                           ("Colar", "paste:", "v", .command), ("Selecionar tudo", "selectAll:", "a", .command)] {
+            edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key).keyEquivalentModifierMask = mods
+            if action == "redo:" { edit.addItem(.separator()) }
         }
-        popover.contentViewController?.view.window?.makeKey()
+        let editItem = NSMenuItem()
+        editItem.submenu = edit
+        NSApp.mainMenu = NSMenu()
+        NSApp.mainMenu?.addItem(item)
+        NSApp.mainMenu?.addItem(editItem)
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
-        outsideClicks = nil
-    }
+    @objc private func showSettings() { pauta?.showSettings() }
 }
