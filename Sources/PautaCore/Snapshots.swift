@@ -153,6 +153,8 @@ enum Snapshots {
         render("tela-app.png", screen())
         render("tela-app-livres.png", screen(freeOpen: true))
         render("tela-app-estreita.png", screen(size: CGSize(width: 560, height: 900)))
+        // Na área que a janela padrão do NeyHub dá ao plugin (o tour do README).
+        render("tela-app-tour.png", screen(shell: Shell(state: PopoverState(version: "0.2.0", hosted: true)), size: CGSize(width: 898, height: 580)))
         render("tela-app-busca.png", screen(query: "checkout"))
         render("tela-app-jira.png", screen(filter: .jira, freeOpen: true))
         render("tela-app-conectar.png", screen(slack: offSlack, jira: offJira, github: noGh))
