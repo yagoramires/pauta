@@ -100,7 +100,7 @@ struct PopoverView: View {
             ? "Nada com “\(query)”." : jiraEmpty ? clearTitle(.jira) : nil
         return VStack(alignment: .leading, spacing: 0) {
             FilterBar(filter: $filter, counts: counts, services: services, searchOpen: $searchOpen, query: $query)
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 if let emptyNote {
                     Note(emptyNote).padding(16)
                 } else {

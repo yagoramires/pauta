@@ -36,7 +36,7 @@ struct ScreenView: View {
     var body: some View {
         Group {
             if showSettings {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) {
                         Button("‹ Voltar") { showSettings = false }.buttonStyle(.link).foregroundStyle(Grafite.text)
                             .padding([.top, .horizontal], 16)
@@ -95,7 +95,7 @@ struct ScreenView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(spacing: 12) {
                         ForEach(columns, id: \.self) { column in
                             card(scrolls: false) { content(column, visible: visible, highlighted: highlighted) }
@@ -122,7 +122,7 @@ struct ScreenView: View {
         let inner = VStack(alignment: .leading, spacing: 0) { content() }
             .padding(12).frame(maxWidth: .infinity, alignment: .leading)
         return Group {
-            if scrolls { ScrollView { inner } } else { inner }
+            if scrolls { ScrollView(showsIndicators: false) { inner } } else { inner }
         }
         .frame(maxWidth: .infinity, maxHeight: scrolls ? .infinity : nil, alignment: .topLeading)
         .background(Grafite.card, in: RoundedRectangle(cornerRadius: Grafite.cardRadius))
