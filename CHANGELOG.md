@@ -13,6 +13,7 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - "Sair do Pauta" nos ajustes.
 
 ### Alterado
+- Ícone novo no padrão do NeyHub: o mesmo desenho, em fundo grafite com detalhe verde-limão.
 - Visual no tema Grafite do NeyHub (sempre escuro, acento verde-limão).
 - Tocar numa notificação abre a mensagem certa mesmo depois de reiniciar: o link fica guardado em `avisos.json` (os 200 mais recentes).
 - O build exige o certificado local de assinatura (sem fallback ad-hoc).
